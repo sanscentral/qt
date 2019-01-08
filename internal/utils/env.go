@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var qT_VERSION_CACHE string
@@ -21,7 +22,7 @@ func QT_VERSION() string {
 		}
 		return qT_VERSION_CACHE
 	}
-	return "5.11.1"
+	return "5.12.0"
 }
 
 func QT_VERSION_NUM() int {
@@ -46,6 +47,13 @@ func QT_API(def string) string {
 		return api
 	}
 	return def
+}
+
+func QT_API_NUM(def string) int {
+	version := QT_API(def)
+	vmaj, _ := strconv.Atoi(string(version[0]))
+	vmin, _ := strconv.Atoi(strings.Replace(version[1:], ".", "", -1))
+	return vmaj*1e3 + vmin
 }
 
 func QT_DIR() string {
@@ -168,9 +176,12 @@ func ToolPath(tool, target string) string {
 				}
 				return filepath.Join(QT_MSYS2_DIR(), "bin", tool)
 			}
-			path := filepath.Join(QT_DIR(), QT_VERSION_MAJOR(), "mingw53_32", "bin", tool)
+			path := filepath.Join(QT_DIR(), QT_VERSION_MAJOR(), "mingw73_64", "bin", tool)
 			if !ExistsDir(filepath.Join(QT_DIR(), QT_VERSION_MAJOR())) {
-				path = filepath.Join(QT_DIR(), QT_VERSION(), "mingw53_32", "bin", tool)
+				path = filepath.Join(QT_DIR(), QT_VERSION(), "mingw73_64", "bin", tool)
+			}
+			if !ExistsFile(path + ".exe") {
+				path = strings.Replace(path, "mingw73_64", "mingw53_32", -1)
 			}
 			if !ExistsFile(path + ".exe") {
 				path = strings.Replace(path, "mingw53_32", "mingw49_32", -1)
@@ -239,4 +250,38 @@ func GOARCH() string {
 
 func QT_DYNAMIC_SETUP() bool {
 	return os.Getenv("QT_DYNAMIC_SETUP") == "true"
+}
+
+func GOFLAGS() string {
+	if flags, ok := os.LookupEnv("GOFLAGS"); ok {
+		return flags
+	}
+	if (strings.Contains(runtime.Version(), "1.11") || strings.Contains(runtime.Version(), "devel")) && UseGOMOD("") {
+		return "-mod=vendor"
+	}
+	return ""
+}
+
+func GOMOD(path string) string {
+	if mod, ok := os.LookupEnv("GOMOD"); ok {
+		return mod
+	}
+	cmd := exec.Command("go", "env", "GOMOD")
+	cmd.Dir = path
+	return strings.TrimSpace(RunCmd(cmd, "GOMOD"))
+}
+
+var (
+	useGOMOD      bool
+	useGOMODMutex = new(sync.Mutex)
+)
+
+func UseGOMOD(path string) (r bool) {
+	useGOMODMutex.Lock()
+	if !useGOMOD && len(GOMOD(path)) != 0 {
+		useGOMOD = true
+	}
+	r = useGOMOD
+	useGOMODMutex.Unlock()
+	return
 }

@@ -20,7 +20,7 @@ else
   QT=qt-unified-mac-x64-online
   curl -sL --retry 10 --retry-delay 10 -o /tmp/$QT.dmg https://download.qt.io/official_releases/online_installers/$QT.dmg
   hdiutil attach -noverify -noautofsck -quiet /tmp/$QT.dmg
-  QT=qt-unified-mac-x64-3.0.2-online
+  QT=qt-unified-mac-x64-3.0.5-online
   if [ "$IOS" == "true" ] || [ "$IOS_SIMULATOR" == "true" ]
   then
     /Volumes/$QT/$QT.app/Contents/MacOS/$QT -v --script $GOPATH/src/github.com/therecipe/qt/internal/ci/iscript.qs IOS=true
@@ -47,11 +47,11 @@ then
   echo "y" | $HOME/android-sdk-macosx/tools/bin/sdkmanager --update
 
   #download and install android ndk
-  NDK=android-ndk-r14b-darwin-x86_64.zip
+  NDK=android-ndk-r18b-darwin-x86_64.zip
   curl -sL --retry 10 --retry-delay 10 -o /tmp/$NDK https://dl.google.com/android/repository/$NDK
   unzip -qq /tmp/$NDK -d $HOME
   rm -f /tmp/$NDK
-  ln -s $HOME/android-ndk-r14b $HOME/Desktop
+  ln -s $HOME/android-ndk-r18b $HOME/Desktop
 fi
 
 #prepare env

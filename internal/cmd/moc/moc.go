@@ -51,6 +51,14 @@ var (
 )
 
 func Moc(path, target, tags string, fast, slow bool) {
+	if utils.UseGOMOD(path) {
+		if !utils.ExistsDir(filepath.Join(path, "vendor")) {
+			cmd := exec.Command("go", "mod", "vendor")
+			cmd.Dir = path
+			utils.RunCmd(cmd, "go mod vendor")
+		}
+	}
+
 	moc(path, target, tags, fast, slow, true, -1, false)
 }
 
@@ -378,11 +386,16 @@ func moc(path, target, tags string, fast, slow, root bool, l int, dirty bool) {
 			}
 		}()
 
+		var libs []string
+		parser.LibDepsMutex.Lock()
+		libs = parser.LibDeps[parser.MOC]
+		parser.LibDepsMutex.Unlock()
+
 		rootWg.Add(1)
-		go func(libs []string) {
+		go func() {
 			templater.CgoTemplateSafe(parser.MOC, path, target, templater.MOC, pkg, tags, libs)
 			rootWg.Done()
-		}(parser.LibDeps[parser.MOC])
+		}()
 
 		rootWg.Add(1)
 		go func() {
@@ -406,7 +419,9 @@ func moc(path, target, tags string, fast, slow, root bool, l int, dirty bool) {
 			delete(parser.State.ClassMap, c.Name)
 		}
 	}
+	parser.LibDepsMutex.Lock()
 	parser.LibDeps[parser.MOC] = make([]string, 0)
+	parser.LibDepsMutex.Unlock()
 	//<--
 }
 

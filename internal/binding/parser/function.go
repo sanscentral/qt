@@ -290,6 +290,8 @@ func (f *Function) IsSupported() bool {
 
 	switch {
 	case
+		f.ClassName() == "operator QCborError",
+
 		(f.ClassName() == "QAccessibleObject" || f.ClassName() == "QAccessibleInterface" || f.ClassName() == "QAccessibleWidget" || //QAccessible::State -> quint64
 			f.ClassName() == "QAccessibleStateChangeEvent") && (f.Name == "state" || f.Name == "changedStates" || f.Name == "m_changedStates" || f.Name == "setM_changedStates" || f.Meta == CONSTRUCTOR),
 
@@ -333,7 +335,7 @@ func (f *Function) IsSupported() bool {
 
 		f.Fullname == "QListView::indexesMoved", f.Fullname == "QAudioInputSelectorControl::availableInputs", f.Fullname == "QScxmlStateMachine::initialValuesChanged",
 		f.Fullname == "QAudioOutputSelectorControl::availableOutputs", f.Fullname == "QQuickWebEngineProfile::downloadFinished",
-		f.Fullname == "QQuickWindow::closing", f.Fullname == "QQuickWebEngineProfile::downloadRequested", f.Fullname == "QWebEnginePage::fullScreenRequested",
+		f.Fullname == "QQuickWindow::closing", f.Fullname == "QQuickWebEngineProfile::downloadRequested",
 
 		f.Fullname == "QApplication::autoMaximizeThreshold", f.Fullname == "QApplication::setAutoMaximizeThreshold",
 
@@ -357,7 +359,7 @@ func (f *Function) IsSupported() bool {
 		f.Fullname == "QAndroidBinder::onTransact", f.Fullname == "QtAndroid::checkPermission",
 
 		UseJs() &&
-			(strings.Contains(f.Name, "ibraryPath") || f.Fullname == "QLockFile::getLockInfo" || f.Name == "metric" || f.Name == "moveCursor" ||
+			(strings.Contains(f.Name, "ibraryPath") || f.Fullname == "QLockFile::getLockInfo" ||
 				f.Name == "inputMethodEvent" || f.Name == "updateInputMethod" || f.Name == "inputMethodQuery" ||
 				f.Fullname == "QHeaderView::isFirstSectionMovable" || f.Fullname == "QXmlSimpleReader::property" || f.Fullname == "QXmlReader::property" ||
 				f.Fullname == "QWebSocket::ignoreSslErrors" || f.Fullname == "QWebSocket::preSharedKeyAuthenticationRequired" ||
@@ -381,21 +383,31 @@ func (f *Function) IsSupported() bool {
 
 		f.Fullname == "QtRemoteObjects::qt_getEnumMetaObject",
 
-		f.ClassName() == "QWebEnginePage" && (f.Name == "certificateError" ||
-			f.Name == "quotaRequested" || f.Name == "registerProtocolHandlerRequested"),
+		//WebEngine
+		f.Fullname == "QWebEnginePage::quotaRequested",
+		f.Fullname == "QWebEnginePage::registerProtocolHandlerRequested",
+		f.Fullname == "QWebEnginePage::save",
+		f.Fullname == "QWebEnginePage::fullScreenRequested",
 
 		f.Fullname == "QWebEngineScriptCollection::insert",
 		f.Fullname == "QWebEngineScriptCollection::findScript",
-		f.Fullname == "QWebEngineView::pageAction",
-		f.Fullname == "QWebEnginePage::save",
 		f.Fullname == "QWebEngineScriptCollection::remove",
 		f.Fullname == "QWebEngineScriptCollection::contains",
 		f.Fullname == "QWebEngineScriptCollection::findScripts",
 		f.Fullname == "QWebEngineScriptCollection::toList",
+
+		f.Fullname == "QWebEngineView::pageAction",
 		f.Fullname == "QWebEngineView::createWindow",
 		f.Fullname == "QWebEngineView::renderProcessTerminated",
 		f.Fullname == "QWebEngineView::triggerPageAction",
+		//
+
 		f.Fullname == "QCustom3DVolume::QCustom3DVolume" && f.OverloadNumber == "2",
+
+		f.Name == "defaultDtlsConfiguration", f.Name == "setDefaultDtlsConfiguration",
+		f.Name == "setDtlsCookieVerificationEnabled", f.Name == "dtlsCookieVerificationEnabled",
+		f.Fullname == "QNearFieldManager::adapterStateChanged", f.Name == "singletonInstance",
+		f.Fullname == "QWebEngineUrlScheme::syntax",
 
 		strings.Contains(f.Access, "unsupported"):
 		{
@@ -418,7 +430,7 @@ func (f *Function) IsSupported() bool {
 		strings.HasPrefix(genName, "attributes") || strings.HasPrefix(genName, "additionalFormats") ||
 		strings.HasPrefix(genName, "rawHeaderPairs") || strings.HasPrefix(genName, "tabs") ||
 		strings.HasPrefix(genName, "QInputMethodEvent_attributes") || strings.HasPrefix(genName, "selections") || strings.HasPrefix(genName, "setSelections") ||
-		strings.HasPrefix(genName, "formats") || strings.HasPrefix(genName, "setAdditionalFormats") || strings.HasPrefix(genName, "setFormats") ||
+		strings.HasPrefix(genName, "setAdditionalFormats") || strings.HasPrefix(genName, "setFormats") ||
 		strings.HasPrefix(genName, "setTabs") || strings.HasPrefix(genName, "extraSelections") ||
 		strings.HasPrefix(genName, "setExtraSelections") || strings.HasPrefix(genName, "setButtonLayout") ||
 		strings.HasPrefix(genName, "setWhiteList") || strings.HasPrefix(genName, "whiteList") ||
@@ -427,7 +439,8 @@ func (f *Function) IsSupported() bool {
 		strings.HasPrefix(genName, "setTextureData") || strings.HasPrefix(genName, "textureData") ||
 		strings.HasPrefix(genName, "QCustom3DVolume_textureData") || strings.HasPrefix(genName, "createTextureData") ||
 		strings.Contains(genName, "alternateSubjectNames") || strings.HasPrefix(genName, "fromVariantMap") ||
-		strings.HasPrefix(genName, "QScxmlDataModel") {
+		strings.HasPrefix(genName, "QScxmlDataModel") || strings.HasPrefix(genName, "readAllFrames") ||
+		strings.HasPrefix(genName, "manufacturerData") {
 
 		if strings.HasPrefix(genName, "setTabs") || strings.HasPrefix(genName, "tabs") {
 			return !strings.HasPrefix(f.Name, "__")

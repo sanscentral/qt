@@ -418,9 +418,6 @@ func (t *TextEdit) clipboardDataChanged() {
 }
 
 func (t *TextEdit) load(f string) bool {
-	if runtime.GOARCH == "js" || runtime.GOARCH == "wasm" {
-		return false
-	}
 	if !(core.QFile_Exists(f)) {
 		return false
 	}
@@ -428,6 +425,7 @@ func (t *TextEdit) load(f string) bool {
 	if !file.Open(core.QIODevice__ReadOnly) {
 		return false
 	}
+	defer file.Close()
 
 	var (
 		data  = file.ReadAll()

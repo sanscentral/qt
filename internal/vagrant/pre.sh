@@ -3,10 +3,10 @@ set -ev
 
 if [[ "$OS" == "darwin" ]]; then
   export PROF=.bash_profile
-  export GO=go1.11.1.darwin-amd64.tar.gz
+  export GO=go1.11.2.darwin-amd64.tar.gz
 else if [[ "$OS" == "linux" ]]; then
   export PROF=.profile
-  export GO=go1.11.1.linux-amd64.tar.gz
+  export GO=go1.11.2.linux-amd64.tar.gz
 
   sudo apt-get -qq update && sudo apt-get -y -qq install curl git software-properties-common libgl1-mesa-dev fontconfig unzip && sudo apt-get -qq clean
 
@@ -37,7 +37,7 @@ if [[ "$QT_MXE" == "true" ]]; then
   echo "export QT_MXE_STATIC="$QT_MXE_STATIC >> $HOME/$PROF
 fi
 
-curl -sL --retry 10 --retry-delay 10 -o /tmp/$GO https://storage.googleapis.com/golang/$GO && tar -xzf /tmp/$GO -C $HOME && rm -f /tmp/$GO
+curl -sL --retry 10 --retry-delay 10 -o /tmp/$GO https://dl.google.com/go/$GO && tar -xzf /tmp/$GO -C $HOME && rm -f /tmp/$GO
 
 echo "export PATH=$PATH:$HOME/go/bin" >> $HOME/$PROF
 echo "export GOROOT=$HOME/go" >> $HOME/$PROF
@@ -49,7 +49,7 @@ if [[ "$OS" == "darwin" ]]; then
   ln -s $HOME/gopath $HOME/Desktop/GOPATH
 fi
 
-go get -v github.com/therecipe/qt/cmd/...
+go get -v -tags=no_env github.com/therecipe/qt/cmd/...
 
 if [[ "$OS" == "darwin" ]]; then
   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer

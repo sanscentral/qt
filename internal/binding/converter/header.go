@@ -172,7 +172,7 @@ func GoHeaderInput(f *parser.Function) string {
 			fmt.Fprint(bb, "ptr unsafe.Pointer")
 		}
 		for _, p := range f.Parameters {
-			if parser.UseJs() {
+			if parser.UseJs() { //TODO: move into goType ?
 				if v := goType(f, p.Value, p.PureGoType); v != "" {
 					cv := parser.CleanValue(p.Value)
 					if isEnum(f.ClassName(), cv) {
@@ -185,7 +185,11 @@ func GoHeaderInput(f *parser.Function) string {
 								fmt.Fprintf(bb, ", %vP *js.Object", parser.CleanName(p.Name, p.Value))
 							}
 						} else {
-							fmt.Fprintf(bb, ", %v uintptr", parser.CleanName(p.Name, p.Value))
+							if f.FakeForJSCallback {
+								fmt.Fprintf(bb, ", %v *js.Object", parser.CleanName(p.Name, p.Value))
+							} else {
+								fmt.Fprintf(bb, ", %v uintptr", parser.CleanName(p.Name, p.Value))
+							}
 						}
 					} else {
 						if parser.IsPackedList(cv) || parser.IsPackedMap(cv) {
@@ -202,7 +206,11 @@ func GoHeaderInput(f *parser.Function) string {
 									fmt.Fprintf(bb, ", %vP *js.Object", parser.CleanName(p.Name, p.Value))
 								}
 							} else {
-								fmt.Fprintf(bb, ", %v %v", parser.CleanName(p.Name, p.Value), v)
+								if v == "*bool" {
+									fmt.Fprintf(bb, ", %v uintptr", parser.CleanName(p.Name, p.Value))
+								} else {
+									fmt.Fprintf(bb, ", %v %v", parser.CleanName(p.Name, p.Value), v)
+								}
 							}
 						}
 					}

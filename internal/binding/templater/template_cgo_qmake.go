@@ -89,6 +89,7 @@ func isAlreadyCached(module, path, target string, mode int, libs []string) bool 
 			}
 
 			allLibs := parser.GetLibs()
+			parser.LibDepsMutex.Lock()
 			for i := len(allLibs) - 1; i >= 0; i-- {
 				for _, dep := range append(libs, module) {
 					var broke bool
@@ -104,6 +105,7 @@ func isAlreadyCached(module, path, target string, mode int, libs []string) bool 
 					}
 				}
 			}
+			parser.LibDepsMutex.Unlock()
 
 			for _, dep := range allLibs {
 				if strings.Contains(strings.ToLower(file), "_"+strings.ToLower(dep)+"_") {
@@ -270,7 +272,7 @@ func createMakefile(module, path, target string, mode int) {
 	case "ios-simulator":
 		cmd.Args = append(cmd.Args, []string{"-spec", "macx-ios-clang", "CONFIG+=iphonesimulator", "CONFIG+=simulator"}...)
 	case "android", "android-emulator":
-		cmd.Args = append(cmd.Args, []string{"-spec", "android-g++"}...)
+		cmd.Args = append(cmd.Args, []string{"-spec", "android-clang"}...)
 		cmd.Env = []string{fmt.Sprintf("ANDROID_NDK_ROOT=%v", utils.ANDROID_NDK_DIR())}
 	case "sailfish", "sailfish-emulator":
 		cmd.Args = append(cmd.Args, []string{"-spec", "linux-g++"}...)
@@ -307,6 +309,7 @@ func createMakefile(module, path, target string, mode int) {
 			}
 		}
 	case "js", "wasm":
+		cmd.Args = append(cmd.Args, []string{"-spec", "wasm-emscripten"}...)
 		for key, value := range env {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%v=%v", key, value))
 		}
@@ -457,8 +460,10 @@ func createCgo(module, path, target string, mode int, ipkg, tags string) string 
 				pFix := []string{
 					filepath.Join(utils.QT_DIR(), utils.QT_VERSION(), "mingw49_32"),
 					filepath.Join(utils.QT_DIR(), utils.QT_VERSION(), "mingw53_32"),
+					filepath.Join(utils.QT_DIR(), utils.QT_VERSION(), "mingw73_64"),
 					filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "mingw49_32"),
 					filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "mingw53_32"),
+					filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "mingw73_64"),
 					filepath.Join(utils.QT_MXE_DIR(), "usr", utils.QT_MXE_TRIPLET(), "qt5"),
 					utils.QT_MSYS2_DIR(),
 				}
@@ -493,6 +498,8 @@ func createCgo(module, path, target string, mode int, ipkg, tags string) string 
 	case "ios-simulator":
 		fmt.Fprintf(bb, "#cgo CXXFLAGS: -isysroot %v/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/%v -mios-simulator-version-min=10.0\n", utils.XCODE_DIR(), utils.IPHONESIMULATOR_SDK_DIR())
 		fmt.Fprintf(bb, "#cgo LDFLAGS: -Wl,-syslibroot,%v/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/%v -mios-simulator-version-min=10.0\n", utils.XCODE_DIR(), utils.IPHONESIMULATOR_SDK_DIR())
+	case "js", "wasm":
+		fmt.Fprint(bb, "#cgo CFLAGS: -s EXTRA_EXPORTED_RUNTIME_METHODS=['getValue','setValue']\n")
 	}
 
 	fmt.Fprint(bb, "#cgo CFLAGS: -Wno-unused-parameter -Wno-unused-variable -Wno-return-type\n")
@@ -518,15 +525,14 @@ func createCgo(module, path, target string, mode int, ipkg, tags string) string 
 		tmp = strings.Replace(tmp, "$(EXPORT_ARCH_ARGS)", "-arch x86_64", -1)
 		tmp = strings.Replace(tmp, "$(EXPORT_QMAKE_XARCH_CFLAGS)", "", -1)
 		tmp = strings.Replace(tmp, "$(EXPORT_QMAKE_XARCH_LFLAGS)", "", -1)
-	case "android", "android-emulator":
-		tmp = strings.Replace(tmp, fmt.Sprintf("-Wl,-soname,lib%v.so", filepath.Base(path)), "", -1)
+	case "android", "android-emulator": //TODO:
+		tmp = strings.Replace(tmp, fmt.Sprintf("-Wl,-soname,lib%v.so", filepath.Base(path)), "-Wl,-soname,libgo_base.so", -1)
 		tmp = strings.Replace(tmp, "-shared", "", -1)
 	case "js", "wasm":
 		tmp = strings.Replace(tmp, "\"", "", -1)
 		if utils.QT_DEBUG() {
 			tmp = strings.Replace(tmp, "-s USE_FREETYPE=1", "-s USE_FREETYPE=1 -s ASSERTIONS=1", -1)
 		}
-		tmp = strings.Replace(tmp, "-s NO_EXIT_RUNTIME=0", "-s NO_EXIT_RUNTIME=1", -1) //TODO: block main instead
 	}
 
 	for _, variable := range []string{"DEFINES", "SUBLIBS", "EXPORT_QMAKE_XARCH_CFLAGS", "EXPORT_QMAKE_XARCH_LFLAGS", "EXPORT_ARCH_ARGS", "-fvisibility=hidden", "-fembed-bitcode"} {
@@ -549,18 +555,27 @@ func createCgo(module, path, target string, mode int, ipkg, tags string) string 
 
 	for _, file := range cgoFileNames(module, path, target, mode) {
 		switch target {
+		case "android", "android-emulator":
+			tmp = strings.Replace(tmp, "/opt/android/"+filepath.Base(utils.ANDROID_NDK_DIR()), utils.ANDROID_NDK_DIR(), -1)
 		case "darwin":
 			for _, lib := range []string{"WebKitWidgets", "WebKit"} {
 				tmp = strings.Replace(tmp, "-lQt5"+lib, "-framework Qt"+lib, -1)
 			}
+			tmp = strings.Replace(tmp, "-Wl,-rpath,@executable_path/Frameworks", "", -1)
 		case "windows":
 			if utils.QT_MSYS2() {
 				tmp = strings.Replace(tmp, ",--relax,--gc-sections", "", -1)
+				if utils.QT_MSYS2_STATIC() {
+					tmp = strings.Replace(tmp, "-ffunction-sections", "", -1)
+					tmp = strings.Replace(tmp, "-fdata-sections", "", -1)
+					tmp = strings.Replace(tmp, "-Wl,--gc-sections", "", -1)
+				}
 			}
 			if utils.QT_MSYS2() && utils.QT_MSYS2_ARCH() == "amd64" {
 				tmp = strings.Replace(tmp, " -Wa,-mbig-obj ", " ", -1)
 			}
-			if (utils.QT_MSYS2() && utils.QT_MSYS2_ARCH() == "amd64") || utils.QT_MXE_ARCH() == "amd64" {
+			if (utils.QT_MSYS2() && utils.QT_MSYS2_ARCH() == "amd64") || utils.QT_MXE_ARCH() == "amd64" ||
+				(!utils.QT_MXE() && !utils.QT_MSYS2() && utils.QT_VERSION_NUM() >= 5120) {
 				tmp = strings.Replace(tmp, " -Wl,-s ", " ", -1)
 			}
 			if utils.QT_DEBUG_CONSOLE() { //TODO: necessary at all?
@@ -580,6 +595,8 @@ func createCgo(module, path, target string, mode int, ipkg, tags string) string 
 			if mode == RCC {
 				utils.Save(filepath.Join(path, strings.Replace(file, "_cgo_", "_stub_", -1)), "package "+pkg+"\n")
 			}
+		case "linux":
+			tmp = strings.Replace(tmp, "-Wl,-O1", "-O1", -1)
 		}
 		utils.Save(filepath.Join(path, file), tmp)
 	}
@@ -605,7 +622,8 @@ func cgoFileNames(module, path, target string, mode int) []string {
 	case "linux":
 		sFixes = []string{"linux_" + utils.GOARCH()}
 	case "windows":
-		if utils.QT_MXE_ARCH() == "amd64" || (utils.QT_MSYS2() && utils.QT_MSYS2_ARCH() == "amd64") {
+		if utils.QT_MXE_ARCH() == "amd64" || (utils.QT_MSYS2() && utils.QT_MSYS2_ARCH() == "amd64") ||
+			(!utils.QT_MXE() && !utils.QT_MSYS2() && utils.QT_VERSION_NUM() >= 5120) {
 			sFixes = []string{"windows_amd64"}
 		} else {
 			sFixes = []string{"windows_386"}

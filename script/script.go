@@ -21,6 +21,12 @@ func cGoUnpackString(s C.struct_QtScript_PackedString) string {
 	}
 	return C.GoStringN(s.data, C.int(s.len))
 }
+func cGoUnpackBytes(s C.struct_QtScript_PackedString) []byte {
+	if int(s.len) == -1 {
+		return []byte(C.GoString(s.data))
+	}
+	return C.GoBytes(unsafe.Pointer(s.data), C.int(s.len))
+}
 
 type QSOperator struct {
 	ptr unsafe.Pointer
@@ -3198,9 +3204,11 @@ func (ptr *QScriptString) IsValid() bool {
 	return false
 }
 
-func (ptr *QScriptString) ToArrayIndex(ok bool) uint {
+func (ptr *QScriptString) ToArrayIndex(ok *bool) uint {
 	if ptr.Pointer() != nil {
-		return uint(uint32(C.QScriptString_ToArrayIndex(ptr.Pointer(), C.char(int8(qt.GoBoolToInt(ok))))))
+		okC := C.char(int8(qt.GoBoolToInt(*ok)))
+		defer func() { *ok = int8(okC) != 0 }()
+		return uint(uint32(C.QScriptString_ToArrayIndex(ptr.Pointer(), &okC)))
 	}
 	return 0
 }

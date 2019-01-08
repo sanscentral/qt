@@ -22,6 +22,12 @@ func cGoUnpackString(s C.struct_QtAndroidExtras_PackedString) string {
 	}
 	return C.GoStringN(s.data, C.int(s.len))
 }
+func cGoUnpackBytes(s C.struct_QtAndroidExtras_PackedString) []byte {
+	if int(s.len) == -1 {
+		return []byte(C.GoString(s.data))
+	}
+	return C.GoBytes(unsafe.Pointer(s.data), C.int(s.len))
+}
 func QAndroidJniEnvironment_ExceptionCatch() error {
 	var err error
 	if QAndroidJniEnvironment_ExceptionCheck() {
@@ -454,6 +460,18 @@ func QAndroidJniEnvironment_JavaVM() unsafe.Pointer {
 
 func (ptr *QAndroidJniEnvironment) JavaVM() unsafe.Pointer {
 	return unsafe.Pointer(C.QAndroidJniEnvironment_QAndroidJniEnvironment_JavaVM())
+}
+
+func (ptr *QAndroidJniEnvironment) FindClass(className string) unsafe.Pointer {
+	if ptr.Pointer() != nil {
+		var classNameC *C.char
+		if className != "" {
+			classNameC = C.CString(className)
+			defer C.free(unsafe.Pointer(classNameC))
+		}
+		return unsafe.Pointer(C.QAndroidJniEnvironment_FindClass(ptr.Pointer(), classNameC))
+	}
+	return nil
 }
 
 func (ptr *QAndroidJniEnvironment) DestroyQAndroidJniEnvironment() {

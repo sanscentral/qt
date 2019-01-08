@@ -23,6 +23,14 @@ var (
 )
 
 func Rcc(path, target, tagsCustom, output_dir string) {
+	if utils.UseGOMOD(path) {
+		if !utils.ExistsDir(filepath.Join(path, "vendor")) {
+			cmd := exec.Command("go", "mod", "vendor")
+			cmd.Dir = path
+			utils.RunCmd(cmd, "go mod vendor")
+		}
+	}
+
 	rcc(path, target, tagsCustom, output_dir, true)
 }
 
@@ -30,6 +38,7 @@ func rcc(path, target, tagsCustom, output_dir string, root bool) {
 	utils.Log.WithField("path", path).WithField("target", target).Debug("start Rcc")
 
 	//TODO: cache non go asset (*.qml, ...) hashes in rcc.go files to indentify staled assets in cached go packages
+	//TODO: pure go.rcc for wasm/js targets
 
 	if root {
 		wg := new(sync.WaitGroup)

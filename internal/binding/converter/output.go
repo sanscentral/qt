@@ -11,7 +11,11 @@ import (
 	"github.com/therecipe/qt/internal/binding/parser"
 )
 
+func GoOutput(name, value string, f *parser.Function, p string) string {
+	return goOutput(name, value, f, p)
+}
 func goOutput(name, value string, f *parser.Function, p string) string {
+	vOld := value
 
 	name = parser.CleanName(name, value)
 	value = parser.CleanValue(value)
@@ -19,6 +23,22 @@ func goOutput(name, value string, f *parser.Function, p string) string {
 	switch value {
 	case "char", "qint8", "uchar", "quint8", "GLubyte", "QString":
 		{
+			if !parser.UseJs() { //TODO: support []byte in js as well
+				switch value {
+				case "char", "qint8", "uchar", "quint8", "GLubyte":
+					if len(f.Parameters) <= 4 &&
+						(strings.Contains(strings.ToLower(f.Name), "read") ||
+							strings.Contains(strings.ToLower(f.Name), "write") ||
+							strings.Contains(strings.ToLower(f.Name), "data")) {
+						for _, p := range f.Parameters {
+							if strings.Contains(p.Value, "int") && f.Parameters[0].Value == vOld {
+								return fmt.Sprintf("cGoUnpackBytes(%v)", name)
+							}
+						}
+					}
+				}
+			}
+
 			return func() string {
 				var out = fmt.Sprintf("cGoUnpackString(%v)", name)
 				if strings.Contains(p, "error") {
@@ -275,6 +295,7 @@ func goOutputFailed(value string, f *parser.Function, p string) string {
 }
 
 func cgoOutput(name, value string, f *parser.Function, p string) string {
+	vOld := value
 
 	name = parser.CleanName(name, value)
 	value = parser.CleanValue(value)
@@ -282,6 +303,22 @@ func cgoOutput(name, value string, f *parser.Function, p string) string {
 	switch value {
 	case "char", "qint8", "uchar", "quint8", "GLubyte", "QString":
 		{
+			if !parser.UseJs() { //TODO: support []byte in js as well
+				switch value {
+				case "char", "qint8", "uchar", "quint8", "GLubyte":
+					if len(f.Parameters) <= 4 &&
+						(strings.Contains(strings.ToLower(f.Name), "read") ||
+							strings.Contains(strings.ToLower(f.Name), "write") ||
+							strings.Contains(strings.ToLower(f.Name), "data")) {
+						for _, p := range f.Parameters {
+							if strings.Contains(p.Value, "int") && f.Parameters[0].Value == vOld {
+								return fmt.Sprintf("cGoUnpackBytes(%v)", name)
+							}
+						}
+					}
+				}
+			}
+
 			out := fmt.Sprintf("cGoUnpackString(%v)", name)
 			if parser.UseJs() {
 				out = name
@@ -407,6 +444,10 @@ func cgoOutput(name, value string, f *parser.Function, p string) string {
 
 	case isClass(value):
 		{
+			if parser.UseJs() && f.SignalMode != parser.CALLBACK {
+				name = fmt.Sprintf("func() uintptr { if %v != js.Undefined { return uintptr(%v.Call(\"Pointer\").Int64()) }; return 0 }()", name, name)
+			}
+
 			if strings.Contains(value, ".") {
 				value = strings.Split(value, ".")[1]
 			}
@@ -491,9 +532,8 @@ func CppOutput(name, value string, f *parser.Function) string {
 	}
 	out := cppOutput(name, value, f)
 
-	if f.BoundByEmscripten || (strings.Contains(CppHeaderOutput(f), "uintptr_t") || strings.Contains(CppHeaderOutput(f), "void*")) && f.SignalMode != parser.CALLBACK {
-		//TODO: cleanup ?
-		//return fmt.Sprintf("reinterpret_cast<uintptr_t>(%v)", out)
+	if f.BoundByEmscripten && (strings.Contains(CppHeaderOutput(f), "uintptr_t") || strings.Contains(CppHeaderOutput(f), "void*")) && f.SignalMode != parser.CALLBACK {
+		return fmt.Sprintf("reinterpret_cast<uintptr_t>(%v)", out)
 	}
 
 	if parser.UseJs() && f.SignalMode != parser.CALLBACK {
@@ -551,7 +591,8 @@ func cppOutputPacked(name, value string, f *parser.Function) string {
 }
 
 //TODO: remove hex encoding once QByteArray <-> ArrayBuffer conversion is possible and/or more TypedArray functions are available for gopherjs/wasm
-//TODO: make exemption for QString and QStringList? they usually won't need the extra hex encoding ...
+//TODO: make exemption for QString and QStringList for now? they usually won't need the extra hex encoding ...
+//TOOD: or use malloc and simply return a pointer? instead waiting for gopherjs/wasm?
 func cppOutputPackingStringForJs(name, length string) string {
 	if parser.UseJs() {
 		return fmt.Sprintf("emscripten::val ret = emscripten::val::object(); ret.set(\"data\", QByteArray::fromRawData(%v, %v).toHex().toStdString()); ret.set(\"len\", %v); ret;", name, length, length)
@@ -692,6 +733,23 @@ func cppOutput(name, value string, f *parser.Function) string {
 		"uintptr_t", "uintptr", "quintptr", "WId":
 		{
 			if strings.Contains(vOld, "*") {
+				if value == "bool" || value == "GLboolean" {
+					if parser.UseJs() {
+						if f.SignalMode == parser.CALLBACK {
+							return fmt.Sprintf("reinterpret_cast<uintptr_t>(%v)", name)
+						}
+						for _, p := range append(f.Parameters, &parser.Parameter{Value: f.Output}) {
+							if parser.IsPackedList(p.Value) || parser.IsPackedMap(p.Value) {
+								return fmt.Sprintf("reinterpret_cast<uintptr_t>(%v)", name)
+							}
+							switch parser.CleanValue(p.Value) {
+							case "char", "qint8", "uchar", "quint8", "GLubyte", "QString", "QStringList":
+								return fmt.Sprintf("reinterpret_cast<uintptr_t>(%v)", name)
+							}
+						}
+					}
+					return fmt.Sprintf("reinterpret_cast<char*>(%v)", name)
+				}
 				return fmt.Sprintf("*%v", name)
 			}
 
@@ -910,7 +968,7 @@ func goOutputJS(name, value string, f *parser.Function, p string) string {
 	case "bool", "GLboolean":
 		{
 			if parser.UseWasm() && f.SignalMode != parser.CALLBACK { //callback arguments for wasm are proper bools, this would panic otherwise: https://github.com/golang/go/blob/master/src/syscall/js/js.go#L361
-				return fmt.Sprintf("%v.Int() != 0", name)
+				return fmt.Sprintf("int8(%v.Int()) != 0", name)
 			}
 			return fmt.Sprintf("%v.Bool()", name)
 		}

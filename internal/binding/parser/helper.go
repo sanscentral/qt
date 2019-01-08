@@ -136,7 +136,13 @@ func CleanName(name, value string) string {
 		"ptr",
 		"register",
 		"forever",
-		"len":
+		"len",
+		"unsafe",
+		"log",
+		"runtime",
+		"time",
+		"hex",
+		"script":
 		{
 			return name[:len(name)-2]
 		}
@@ -151,9 +157,9 @@ func CleanName(name, value string) string {
 			}
 		}
 
-	case "f", "fmt":
+	case "f", "fmt", "qt", "js":
 		{
-			return "fo"
+			return name + name
 		}
 	}
 
@@ -161,6 +167,7 @@ func CleanName(name, value string) string {
 }
 
 //TODO: remove global
+var LibDepsMutex = new(sync.Mutex)
 var LibDeps = map[string][]string{
 	"Core":          {"Widgets", "Gui", "Svg"}, //Widgets, Gui //Svg
 	"AndroidExtras": {"Core"},
@@ -236,7 +243,7 @@ func ShouldBuildForTarget(module, target string) bool {
 
 	case "android", "android-emulator":
 		switch module {
-		case "DBus", "WebEngine", "Designer", "PrintSupport": //TODO: PrintSupport
+		case "DBus", "WebEngine", "Designer", "SerialPort", "SerialBus", "PrintSupport": //TODO: PrintSupport
 			return false
 		}
 		if strings.HasSuffix(module, "Extras") && module != "AndroidExtras" {
@@ -275,6 +282,13 @@ func ShouldBuildForTarget(module, target string) bool {
 
 	case "js", "wasm":
 		{
+			switch module {
+			case "DBus", "Designer", "Positioning", "Help", "Location", "UiTools", "WebEngine", "SerialPort", "SerialBus", "Sql":
+				return false
+			}
+			if strings.HasSuffix(module, "Extras") {
+				return false
+			}
 			if !IsWhiteListedJsLib(module) && module != "build_static" {
 				return false
 			}
@@ -294,6 +308,7 @@ func IsWhiteListedSailfishLib(name string) bool {
 	}
 }
 
+//TODO: whitelist everything once dependency issue is resolved
 func IsWhiteListedJsLib(name string) bool {
 	switch name {
 	case "Core", "Gui", "Widgets", "PrintSupport", "Qml", "Quick", "QuickControls2", "Xml", "XmlPatterns", "WebSockets", "Svg", "Charts", "Multimedia":

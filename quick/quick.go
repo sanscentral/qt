@@ -24,6 +24,12 @@ func cGoUnpackString(s C.struct_QtQuick_PackedString) string {
 	}
 	return C.GoStringN(s.data, C.int(s.len))
 }
+func cGoUnpackBytes(s C.struct_QtQuick_PackedString) []byte {
+	if int(s.len) == -1 {
+		return []byte(C.GoString(s.data))
+	}
+	return C.GoBytes(unsafe.Pointer(s.data), C.int(s.len))
+}
 
 type QQuickAsyncImageProvider struct {
 	QQuickImageProvider
@@ -13959,15 +13965,15 @@ func (ptr *QSGNode) RemoveChildNode(node QSGNode_ITF) {
 	}
 }
 
-func (ptr *QSGNode) SetFlag(fo QSGNode__Flag, enabled bool) {
+func (ptr *QSGNode) SetFlag(ff QSGNode__Flag, enabled bool) {
 	if ptr.Pointer() != nil {
-		C.QSGNode_SetFlag(ptr.Pointer(), C.longlong(fo), C.char(int8(qt.GoBoolToInt(enabled))))
+		C.QSGNode_SetFlag(ptr.Pointer(), C.longlong(ff), C.char(int8(qt.GoBoolToInt(enabled))))
 	}
 }
 
-func (ptr *QSGNode) SetFlags(fo QSGNode__Flag, enabled bool) {
+func (ptr *QSGNode) SetFlags(ff QSGNode__Flag, enabled bool) {
 	if ptr.Pointer() != nil {
-		C.QSGNode_SetFlags(ptr.Pointer(), C.longlong(fo), C.char(int8(qt.GoBoolToInt(enabled))))
+		C.QSGNode_SetFlags(ptr.Pointer(), C.longlong(ff), C.char(int8(qt.GoBoolToInt(enabled))))
 	}
 }
 

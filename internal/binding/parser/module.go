@@ -28,14 +28,20 @@ type SubNamespace struct {
 }
 
 func (m *Module) Prepare() error {
+	if utils.QT_API_NUM(utils.QT_VERSION()) >= 5120 && m.Project == "QtQuickControls" {
+		m.Project = "QtQuickControls2"
+	}
+
 	utils.Log.WithField("module", strings.TrimPrefix(m.Project, "Qt")).Debug("prepare")
 
 	//register classes from namespace
 	for _, c := range m.Namespace.Classes {
 		c.register(m)
 	}
+	m.add()
 
 	//register enums and functions from subnamespaces
+	var snsExtraClasses []*Class
 	for _, sns := range m.Namespace.SubNamespaces {
 		for _, e := range sns.Enums {
 			if !(e.Status == "active" || e.Status == "commendable") || !(e.Access == "public" || e.Access == "protected") ||
@@ -71,6 +77,12 @@ func (m *Module) Prepare() error {
 
 				f.Static = true
 				f.register(m.Project)
+				if c, ok := f.Class(); ok {
+					if l := len(snsExtraClasses); l > 0 && snsExtraClasses[l-1].Name == c.Name {
+						continue
+					}
+					snsExtraClasses = append(snsExtraClasses, c)
+				}
 			}
 		}
 	}
@@ -79,7 +91,7 @@ func (m *Module) Prepare() error {
 	m.remove()
 
 	//mutate classes
-	for _, c := range SortedClassesForModule(m.Project, false) {
+	for _, c := range append(SortedClassesForModule(m.Project, false), snsExtraClasses...) {
 		c.add()
 		c.fix()
 		c.remove()

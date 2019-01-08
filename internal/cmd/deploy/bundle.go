@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -18,7 +19,7 @@ import (
 	"github.com/therecipe/qt/internal/utils"
 )
 
-func bundle(mode, target, path, name, depPath string, tagsCustom string) {
+func bundle(mode, target, path, name, depPath string, tagsCustom string, fast bool) {
 	copy := func(src, dst string) {
 		copy := "cp"
 
@@ -86,9 +87,25 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		utils.RunCmd(dep, fmt.Sprintf("deploy for %v on %v", target, runtime.GOOS))
 
 	case "linux", "rpi1", "rpi2", "rpi3":
+		defer func() {
+			filepath.Walk(depPath, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.IsDir() {
+					return nil
+				}
+				if strings.HasPrefix(filepath.Base(path), "lib") {
+					utils.RunCmd(exec.Command("strip", "-s", path), "strip binaries on linux")
+				}
+				return nil
+			})
+		}()
 
 		//copy default assets
-		utils.SaveExec(filepath.Join(depPath, fmt.Sprintf("%v.sh", name)), linux_sh(target, name))
+		if target != "linux" || name == "lib" {
+			utils.SaveExec(filepath.Join(depPath, fmt.Sprintf("%v.sh", name)), linux_sh(target, name))
+		}
 
 		//copy custom assets
 		assets := filepath.Join(path, target)
@@ -179,7 +196,7 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 				if info.IsDir() {
 					return nil
 				}
-				if filepath.Ext(info.Name()) == ".debug" || filepath.Ext(info.Name()) == ".qmlc" {
+				if filepath.Ext(info.Name()) == ".debug" || filepath.Ext(info.Name()) == ".qmlc" || filepath.Ext(info.Name()) == ".jsc" {
 					utils.RemoveAll(path)
 				}
 				return nil
@@ -195,6 +212,41 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 					utils.RunCmd(exec.Command("cp", "-R", filepath.Join(libraryPath, "resources", file.Name()), depPath), fmt.Sprintf("copy resource %v for %v on %v", file.Name(), target, runtime.GOOS))
 				}
 				utils.RunCmd(exec.Command("cp", "-R", filepath.Join(libraryPath, "translations/qtwebengine_locales/"), depPath), fmt.Sprintf("copy qtwebengine_locales dir for %v on %v", target, runtime.GOOS))
+			}
+
+			//patch QtCore path
+			pPath := "."
+			fn := filepath.Join(depPath, "/lib/", "libQt5Core.so.5")
+			data, err := ioutil.ReadFile(fn)
+			if err != nil {
+				utils.Log.WithError(err).Warn("couldn't find", fn)
+				break
+			}
+
+			prefPath := "qt_prfxpath="
+
+			start := bytes.Index(data, []byte(prefPath))
+			if start == -1 {
+				break
+			}
+
+			end := bytes.IndexByte(data[start:], byte(0))
+			if end == -1 {
+				break
+			}
+
+			rep := append([]byte(prefPath), []byte(pPath)...)
+			if lendiff := end - len(rep); lendiff < 0 {
+				end -= lendiff
+			} else {
+				rep = append(rep, bytes.Repeat([]byte{0}, lendiff)...)
+			}
+			data = bytes.Replace(data, data[start:start+end], rep, -1)
+
+			if err := ioutil.WriteFile(fn, data, 0644); err != nil {
+				utils.Log.WithError(err).Warn("couldn't patch", fn)
+			} else {
+				utils.Log.Debug("patched", fn)
 			}
 		}
 		//<--
@@ -252,16 +304,13 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 			paths = append(paths, os.Getenv("PATH"))
 			os.Setenv("PATH", strings.Join(paths, ";"))
 
-			var copyCmd = "xcopy"
+			copyCmd := "xcopy"
 			if utils.MSYSTEM() != "" {
 				copyCmd = "cp"
 			}
 
-			var deploy = exec.Command(filepath.Join(utils.QT_MSYS2_DIR(), "bin", "windeployqt"))
-			deploy.Args = append(deploy.Args,
-				filepath.Join(depPath, name+".exe"),
-				fmt.Sprintf("-qmldir=%v", path),
-				"-force")
+			deploy := exec.Command(filepath.Join(utils.QT_MSYS2_DIR(), "bin", "windeployqt"))
+			deploy.Args = append(deploy.Args, "--verbose=2", "--force", fmt.Sprintf("--qmldir=%v", path), filepath.Join(depPath, name+".exe"))
 			utils.RunCmd(deploy, fmt.Sprintf("depoy %v on %v", target, runtime.GOOS))
 
 			var libraryPath = filepath.Join(utils.QT_MSYS2_DIR(), "bin")
@@ -322,21 +371,6 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 			filepath.Walk(depPath, walkFn)
 
 		default:
-			paths := make([]string, 0)
-			// make windeployqt run correctly
-			path := filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "mingw53_32", "bin")
-			if !utils.ExistsDir(path) {
-				path = strings.Replace(path, "mingw53_32", "mingw49_32", -1)
-			}
-			paths = append(paths, path)
-			path = filepath.Join(utils.QT_DIR(), "Tools", "mingw530_32", "bin")
-			if !utils.ExistsDir(path) {
-				path = strings.Replace(path, "mingw530_32", "mingw492_32", -1)
-			}
-			paths = append(paths, path)
-			paths = append(paths, os.Getenv("PATH"))
-			os.Setenv("PATH", strings.Join(paths, ";"))
-
 			//copy default assets
 			//TODO: windres icon
 
@@ -346,10 +380,7 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 			copy(assets, depPath)
 
 			if utils.QT_WEBKIT() {
-				libraryPath := filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "mingw53_32", "bin")
-				if !utils.ExistsDir(libraryPath) {
-					libraryPath = strings.Replace(libraryPath, "mingw53_32", "mingw49_32", -1)
-				}
+				libraryPath := filepath.Dir(utils.ToolPath("qmake", target))
 				output := utils.RunCmd(exec.Command(filepath.Join("objdump"), "-x", filepath.Join(depPath, name+".exe")), fmt.Sprintf("objdump binary for %v on %v", target, runtime.GOOS))
 				for lib, deps := range parser.LibDeps {
 					if strings.Contains(output, lib) && lib == "WebKit" {
@@ -370,7 +401,7 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 			}
 
 			dep := exec.Command(utils.ToolPath("windeployqt", target))
-			dep.Args = append(dep.Args, filepath.Join(depPath, name+".exe"), "-qmldir="+path)
+			dep.Args = append(dep.Args, "--verbose=2", "--force", fmt.Sprintf("--qmldir=%v", path), filepath.Join(depPath, name+".exe"))
 			utils.RunCmd(dep, fmt.Sprintf("deploy for %v on %v", target, runtime.GOOS))
 		}
 		//<--
@@ -387,19 +418,19 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		compiler := env["CXX"]
 
 		wrapper := filepath.Join(depPath, "c_main_wrapper.cpp")
-		utils.Save(wrapper, "#include \"libgo_base.h\"\nint main(int argc, char *argv[]) { go_main_wrapper(); }")
-		cmd := exec.Command(compiler, "c_main_wrapper.cpp", "-o", filepath.Join(depPath, "libgo.so"), "-I../..", "-L.", "-lgo_base", "--sysroot="+filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-arm"), "-shared")
+		utils.Save(wrapper, "#include \"libgo_base.h\"\nint main(int argc, char *argv[]) { go_main_wrapper(argc, argv); }")
+		cmd := exec.Command(compiler, "c_main_wrapper.cpp", "-o", filepath.Join(depPath, "libgo.so"), "-I../..", "-L.", "-lgo_base", "-Wl,-soname,libgo.so", "-shared")
 		if target == "android-emulator" {
-			cmd = exec.Command(compiler, "c_main_wrapper.cpp", "-o", filepath.Join(depPath, "libgo.so"), "-I../..", "-L.", "-lgo_base", "--sysroot="+filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-x86"), "-shared")
+			cmd = exec.Command(compiler, "c_main_wrapper.cpp", "-o", filepath.Join(depPath, "libgo.so"), "-I../..", "-L.", "-lgo_base", "-Wl,-soname,libgo.so", "-shared")
 		}
+		cmd.Args = append(cmd.Args, strings.Split(env["CGO_CPPFLAGS"], " ")...)
+		cmd.Args = append(cmd.Args, "-I"+filepath.Join(utils.ANDROID_NDK_DIR(), "sysroot", "usr", "include"))
+		cmd.Args = append(cmd.Args, strings.Split(env["CGO_LDFLAGS"], " ")...)
 		cmd.Dir = depPath
 		utils.RunCmd(cmd, fmt.Sprintf("compile wrapper for %v on %v", target, runtime.GOOS))
 		utils.RemoveAll(wrapper)
 
-		strip := exec.Command(filepath.Join(filepath.Dir(compiler), "arm-linux-androideabi-strip"), "libgo.so")
-		if target == "android-emulator" {
-			strip = exec.Command(filepath.Join(filepath.Dir(compiler), "i686-linux-android-strip"), "libgo.so")
-		}
+		strip := exec.Command(filepath.Join(filepath.Dir(compiler), "llvm-strip"), "--strip-all", "libgo.so")
 		strip.Dir = depPath
 		utils.RunCmd(strip, fmt.Sprintf("strip binary for %v on %v", target, runtime.GOOS))
 
@@ -442,9 +473,12 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 			"--android-platform", "android-28",
 			"--jdk", utils.JDK_DIR(),
 			"--gradle",
-			"--no-gdbserver",
 			"--verbose",
 		)
+		if !utils.QT_DEBUG_QML() {
+			dep.Args = append(dep.Args, "--no-gdbserver")
+		}
+
 		if utils.ExistsFile(filepath.Join(path, target, name+".jks")) {
 			dep.Args = append(dep.Args,
 				"--sign", filepath.Join(path, target, name+".jks"), strings.TrimSpace(utils.Load(filepath.Join(path, target, "jks_alias"))),
@@ -464,15 +498,15 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		if utils.QT_VAGRANT() {
 			depPathUNC := strings.Replace(depPath, "C:\\media\\sf_GOPATH", "C:\\media\\UNC\\vboxsrv\\media_sf_GOPATH", -1)
 			if utils.ExistsFile(filepath.Join(path, target, name+".jks")) {
-				copy(filepath.Join(depPathUNC, "build", "build", "outputs", "apk", "build-release-signed.apk"), depPath)
+				copy(filepath.Join(depPathUNC, "build", "build", "outputs", "apk", "release", "build-release-signed.apk"), depPath)
 			} else {
-				copy(filepath.Join(depPathUNC, "build", "build", "outputs", "apk", "build-debug.apk"), depPath)
+				copy(filepath.Join(depPathUNC, "build", "build", "outputs", "apk", "debug", "build-debug.apk"), depPath)
 			}
 		} else {
 			if utils.ExistsFile(filepath.Join(path, target, name+".jks")) {
-				copy(filepath.Join(depPath, "build", "build", "outputs", "apk", "build-release-signed.apk"), depPath)
+				copy(filepath.Join(depPath, "build", "build", "outputs", "apk", "release", "build-release-signed.apk"), depPath)
 			} else {
-				copy(filepath.Join(depPath, "build", "build", "outputs", "apk", "build-debug.apk"), depPath)
+				copy(filepath.Join(depPath, "build", "build", "outputs", "apk", "debug", "build-debug.apk"), depPath)
 			}
 		}
 
@@ -485,18 +519,13 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		utils.Save(filepath.Join(buildPath, "Info.plist"), ios_plist(name))
 		utils.Save(filepath.Join(buildPath, "Images.xcassets", "AppIcon.appiconset", "Contents.json"), ios_appicon())
 		utils.Save(filepath.Join(buildPath, "LaunchScreen.xib"), ios_launchscreen(name))
-		utils.Save(filepath.Join(buildPath, "project.xcodeproj", "project.pbxproj"), ios_xcodeproject(depPath))
+		utils.Save(filepath.Join(buildPath, "project.xcodeproj", "project.pbxproj"), ios_xcodeproject())
 		copy(filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "ios", "mkspecs", "macx-ios-clang", "Default-568h@2x.png"), buildPath)
 
 		//copy custom assets
 		assets := filepath.Join(path, target)
 		utils.MkdirAll(assets)
 		copy(assets+"/.", buildPath)
-
-		//add c_main_wrappers
-		if !utils.ExistsFile(filepath.Join(depPath, target+"_qml_plugin_import.cpp")) {
-			utils.Save(filepath.Join(depPath, target+"_qml_plugin_import.cpp"), "")
-		}
 
 		var t string
 		switch target {
@@ -508,9 +537,14 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 
 		utils.Save(filepath.Join(depPath, "c_main_wrapper_"+t+".cpp"), ios_c_main_wrapper())
 		rcc.ResourceNames = make(map[string]string)
-		cmd := exec.Command("xcrun", "clang++", "c_main_wrapper_"+t+".cpp", target+"_plugin_import.cpp", target+"_qml_plugin_import.cpp", "-o", "build/main", "-u", "_qt_registerPlatformPlugin", "-Wl,-e,_qt_main_wrapper", "-I../..", "-L.", "-lgo")
+		cmd := exec.Command("xcrun", "clang++", "c_main_wrapper_"+t+".cpp", target+"_plugin_import.cpp")
+		newArgs := templater.GetiOSClang(target, t, depPath)
+		if utils.ExistsFile(filepath.Join(depPath, target+"_qml_plugin_import.cpp")) {
+			cmd.Args = append(cmd.Args, target+"_qml_plugin_import.cpp")
+		}
+		cmd.Args = append(cmd.Args, "-o", "build/main", "-u", "_qt_registerPlatformPlugin", "-Wl,-e,_qt_main_wrapper", "-I../..", "-L.", "-lgo")
 		cmd.Dir = depPath
-		cmd.Args = append(cmd.Args, templater.GetiOSClang(target, t, depPath)...)
+		cmd.Args = append(cmd.Args, newArgs...)
 		utils.RunCmd(cmd, fmt.Sprintf("compile wrapper for %v (%v) on %v", target, t, runtime.GOOS))
 
 		strip := exec.Command("strip", "main")
@@ -605,9 +639,16 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		}
 
 		//patch default assets
-		utils.Save(filepath.Join(depPath, "index.html"), strings.Replace(utils.Load(filepath.Join(depPath, "index.html")), "APPNAME", "main", -1))
+		index := utils.Load(filepath.Join(depPath, "index.html"))
+		index = strings.Replace(index, "APPNAME", "main", -1)
+		utils.Save(filepath.Join(depPath, "index.html"), strings.Replace(index, "  </body>", "    <script type=\"text/javascript\" src=\"go.js\"></script>\n  </body>", -1))
+
 		if parser.UseWasm() {
 			utils.Save(filepath.Join(depPath, "go.js"), strings.Replace(utils.Load(filepath.Join(depPath, "go.js")), "})();", wasm_js(), -1))
+		} else {
+			gojs := utils.Load(filepath.Join(depPath, "go.js"))
+			gojs = strings.Replace(gojs, "(function() {", "Module._goMain = function() {", -1)
+			utils.Save(filepath.Join(depPath, "go.js"), strings.Replace(gojs, "}).call(this);", "};", -1))
 		}
 
 		//copy custom assets
@@ -615,14 +656,13 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		utils.MkdirAll(assets)
 		copy(assets+"/.", depPath)
 
-		//add c_main_wrappers
-		if !utils.ExistsFile(filepath.Join(depPath, target+".js_qml_plugin_import.cpp")) {
-			utils.Save(filepath.Join(depPath, target+".js_qml_plugin_import.cpp"), "")
+		if fast {
+			break
 		}
 
-		utils.Save(filepath.Join(depPath, "c_main_wrapper_js.cpp"), js_c_main_wrapper())
+		utils.Save(filepath.Join(depPath, "c_main_wrapper_js.cpp"), js_c_main_wrapper(target))
 		env, _, _, _ := cmd.BuildEnv(target, "", "")
-		cmd := exec.Command(filepath.Join(env["EMSCRIPTEN"], "em++"), "c_main_wrapper_js.cpp", target+".js_plugin_import.cpp", target+".js_qml_plugin_import.cpp")
+		cmd := exec.Command(filepath.Join(env["EMSCRIPTEN"], "em++"), "c_main_wrapper_js.cpp", target+".js_plugin_import.cpp")
 		cmd.Dir = depPath
 
 		for rccFile := range rcc.ResourceNames {
@@ -677,10 +717,13 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		*/
 		//<-
 
-		//TODO: pack js into wasm
+		//TODO: check if minimal packages are stale and skip main.js rebuild this if they aren't
+		newArgs := templater.GetiOSClang(target, "", depPath)
+		if utils.ExistsFile(filepath.Join(depPath, target+".js_qml_plugin_import.cpp")) {
+			cmd.Args = append(cmd.Args, target+".js_qml_plugin_import.cpp")
+		}
+		cmd.Args = append(cmd.Args, newArgs...)
 		cmd.Args = append(cmd.Args, []string{"-o", "main.js"}...)
-		cmd.Args = append(cmd.Args, templater.GetiOSClang(target, "", depPath)...)
-
 		for key, value := range env {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%v=%v", key, value))
 		}
@@ -689,7 +732,6 @@ func bundle(mode, target, path, name, depPath string, tagsCustom string) {
 		utils.RemoveAll(filepath.Join(depPath, "c_main_wrapper_js.cpp"))
 		utils.RemoveAll(filepath.Join(depPath, target+".js_plugin_import.cpp"))
 		utils.RemoveAll(filepath.Join(depPath, target+".js_qml_plugin_import.cpp"))
-		//TODO: remove packed go.js
 		utils.RemoveAll(filepath.Join(depPath, "go.js.map"))
 	}
 

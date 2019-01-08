@@ -19,23 +19,20 @@ import (
 
 func build(mode, target, path, ldFlagsCustom, tagsCustom, name, depPath string, fast, comply bool) {
 	env, tags, ldFlags, out := cmd.BuildEnv(target, name, depPath)
-	if (!fast || utils.QT_STUB()) && !utils.QT_FAT() {
+	if ((!fast || utils.QT_STUB()) && !utils.QT_FAT()) || target == "js" || target == "wasm" {
 		tags = append(tags, "minimal")
-	}
-	if ldFlagsCustom != "" {
-		ldFlags = append(ldFlags, strings.Split(ldFlagsCustom, " ")...)
 	}
 	if tagsCustom != "" {
 		tags = append(tags, strings.Split(tagsCustom, " ")...)
 	}
-	if utils.QT_DEBUG_QML() {
+	if utils.QT_DEBUG_QML() && target == runtime.GOOS {
 		out = filepath.Join(depPath, name)
 	}
 
 	var ending string
 	switch target {
 	case "android", "android-emulator", "ios", "ios-simulator":
-		utils.Save(filepath.Join(path, "cgo_main_wrapper.go"), "package main\nimport \"C\"\n//export go_main_wrapper\nfunc go_main_wrapper() { main() }")
+		utils.Save(filepath.Join(path, "cgo_main_wrapper.go"), "package main\nimport (\n\"C\"\n\"os\"\n\"unsafe\"\n)\n//export go_main_wrapper\nfunc go_main_wrapper(argc C.int, argv unsafe.Pointer) {\nos.Args=make([]string,int(argc))\nfor i,b := range (*[1<<3]*C.char)(argv)[:int(argc):int(argc)] {\nos.Args[i] = C.GoString(b)\n}\nmain()\n}")
 	case "windows":
 		ending = ".exe"
 	case "sailfish", "sailfish-emulator":
@@ -48,6 +45,10 @@ func build(mode, target, path, ldFlagsCustom, tagsCustom, name, depPath string, 
 		return
 	case "wasm":
 		ending = ".wasm"
+	case "linux":
+		if fast {
+			delete(env, "CGO_LDFLAGS")
+		}
 	}
 
 	var pattern string
@@ -57,12 +58,12 @@ func build(mode, target, path, ldFlagsCustom, tagsCustom, name, depPath string, 
 
 	var extraLdFlag string
 	if utils.Log.Level == logrus.DebugLevel && target != "wasm" {
-		extraLdFlag = " \"-extldflags=-v\""
+		ldFlags = append(ldFlags, "-extldflags=-v")
 	}
 
 	cmd := exec.Command("go", "build", "-p", strconv.Itoa(runtime.GOMAXPROCS(0)), "-v")
 	if len(ldFlags) > 0 || len(extraLdFlag) > 0 {
-		cmd.Args = append(cmd.Args, fmt.Sprintf("-ldflags=%v\"%v\"%v", pattern, strings.Join(ldFlags, "\" \""), extraLdFlag))
+		cmd.Args = append(cmd.Args, fmt.Sprintf("-ldflags=%v%v", pattern, escapeFlags(ldFlags, ldFlagsCustom)))
 	}
 	cmd.Args = append(cmd.Args, "-o", out+ending)
 

@@ -2,6 +2,7 @@ package minimal
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,13 @@ import (
 )
 
 func Minimal(path, target, tags string) {
+	if utils.UseGOMOD(path) {
+		if !utils.ExistsDir(filepath.Join(path, "vendor")) {
+			cmd := exec.Command("go", "mod", "vendor")
+			cmd.Dir = path
+			utils.RunCmd(cmd, "go mod vendor")
+		}
+	}
 
 	env, tagsEnv, _, _ := cmd.BuildEnv(target, "", "")
 	scmd := exec.Command("go", "list")
@@ -84,6 +92,21 @@ func Minimal(path, target, tags string) {
 				fileMutex.Lock()
 				files = append(files, file)
 				fileMutex.Unlock()
+			}
+			if target == "js" { //TODO: wasm as well
+				filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+					if err != nil || info.IsDir() {
+						return err
+					}
+					if filepath.Ext(path) == ".js" {
+						utils.Log.WithField("path", path).Debug("analyse js for minimal")
+						file := utils.Load(path)
+						fileMutex.Lock()
+						files = append(files, file)
+						fileMutex.Unlock()
+					}
+					return nil
+				})
 			}
 			<-wc
 			wg.Done()
@@ -233,6 +256,7 @@ func Minimal(path, target, tags string) {
 			continue
 		}
 
+		utils.MkdirAll(utils.GoQtPkgPath(strings.ToLower(m)))
 		utils.SaveBytes(utils.GoQtPkgPath(strings.ToLower(m), strings.ToLower(m)+"-minimal.cpp"), templater.CppTemplate(m, templater.MINIMAL, target, ""))
 		utils.SaveBytes(utils.GoQtPkgPath(strings.ToLower(m), strings.ToLower(m)+"-minimal.h"), templater.HTemplate(m, templater.MINIMAL, ""))
 		utils.SaveBytes(utils.GoQtPkgPath(strings.ToLower(m), strings.ToLower(m)+"-minimal.go"), templater.GoTemplate(m, false, templater.MINIMAL, m, target, ""))

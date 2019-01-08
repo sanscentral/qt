@@ -24,6 +24,7 @@ func GoTemplate(module string, stub bool, mode int, pkg, target, tags string) []
 
 	if !(UseStub(stub, module, mode) || UseJs()) {
 		fmt.Fprintf(bb, "func cGoUnpackString(s C.struct_%v_PackedString) string { if int(s.len) == -1 {\n return C.GoString(s.data)\n }\n return C.GoStringN(s.data, C.int(s.len)) }\n", strings.Title(module))
+		fmt.Fprintf(bb, "func cGoUnpackBytes(s C.struct_%v_PackedString) []byte { if int(s.len) == -1 {\n return []byte(C.GoString(s.data))\n }\n return C.GoBytes(unsafe.Pointer(s.data), C.int(s.len)) }\n", strings.Title(module))
 	}
 
 	if UseJs() {
@@ -486,9 +487,24 @@ func (ptr *%[1]v) Destroy%[1]v() {
 			}
 		}
 
+		if parser.UseWasm() {
+			//TODO:
+		} else {
+			fmt.Fprint(bb, "var module *js.Object\n")
+			fmt.Fprintf(bb, "if m := js.Global.Get(\"%v\"); m == js.Undefined {\n", goModule(module))
+			fmt.Fprint(bb, "\tmodule = new(js.Object)\n")
+			fmt.Fprintf(bb, "\tjs.Global.Set(\"%v\", module)\n", goModule(module))
+			fmt.Fprint(bb, "} else {\n")
+			fmt.Fprint(bb, "\tmodule = m\n")
+			fmt.Fprint(bb, "}\n")
+		}
+
 		for _, c := range parser.SortedClassesForModule(module, true) {
 			for _, f := range c.Functions {
-				if f.Meta != parser.CONSTRUCTOR {
+				if f.Meta != parser.CONSTRUCTOR && !f.Static {
+					continue
+				}
+				if strings.Contains(f.Name, "RegisterMetaType") || strings.Contains(f.Name, "RegisterType") { //TODO:
 					continue
 				}
 				if !f.IsSupported() {
@@ -506,10 +522,27 @@ func (ptr *%[1]v) Destroy%[1]v() {
 				if parser.UseWasm() {
 					out = "" //TODO: export classes for jsinterop example
 				} else {
-					out = fmt.Sprintf("qt.WASM.Set(\"%v\", func(%v) *js.Object { return js.MakeWrapper(%v(%v)); })\n", converter.GoHeaderName(f), ip, converter.GoHeaderName(f), converter.GoInputParametersForCallback(f))
+					if converter.GoHeaderOutput(f) != "" {
+						out = fmt.Sprintf("module.Set(\"%v\", func(%v) *js.Object { return qt.MakeWrapper(%v(%v)); })\n", converter.GoHeaderName(f), ip, converter.GoHeaderName(f), converter.GoInputParametersForCallback(f))
+					} else {
+						out = fmt.Sprintf("module.Set(\"%v\", func(%v) { %v(%v); })\n", converter.GoHeaderName(f), ip, converter.GoHeaderName(f), converter.GoInputParametersForCallback(f))
+					}
 				}
 				if !strings.Contains(out, "unsupported_") && !strings.Contains(out, "C.") && strings.Contains(bb.String(), converter.GoHeaderName(f)+"(") {
 					bb.WriteString(out)
+				}
+			}
+
+			for _, e := range c.Enums {
+				for _, v := range e.Values {
+					if v.Name == "ByteOrder" {
+						continue
+					}
+					if parser.UseWasm() {
+						//TODO:
+					} else {
+						fmt.Fprintf(bb, "module.Set(\"%v__%v\", int64(%v__%v))\n", strings.Split(e.Fullname, "::")[0], v.Name, strings.Split(e.Fullname, "::")[0], v.Name)
+					}
 				}
 			}
 		}
@@ -601,7 +634,7 @@ import "C"
 	}
 
 	fmt.Fprint(bb, "import (\n")
-	for _, m := range append(parser.GetLibs(), "qt", "strings", "unsafe", "log", "runtime", "fmt", "errors", "js", "time", "hex") {
+	for _, m := range append(parser.GetLibs(), "qt", "strings", "unsafe", "log", "runtime", "fmt", "errors", "js", "time", "hex", "reflect") {
 		mlow := strings.ToLower(m)
 		if strings.Contains(inputString, fmt.Sprintf(" %v.", mlow)) ||
 			strings.Contains(inputString, fmt.Sprintf("\t%v.", mlow)) ||
@@ -613,7 +646,7 @@ import "C"
 			strings.Contains(inputString, fmt.Sprintf(")%v.", mlow)) ||
 			strings.Contains(inputString, fmt.Sprintf("std_%v.", mlow)) {
 			switch mlow {
-			case "strings", "unsafe", "log", "runtime", "fmt", "errors", "time":
+			case "strings", "unsafe", "log", "runtime", "fmt", "errors", "time", "reflect":
 				fmt.Fprintf(bb, "\"%v\"\n", mlow)
 
 			case "hex":

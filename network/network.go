@@ -10,6 +10,7 @@ import "C"
 import (
 	"github.com/therecipe/qt"
 	"github.com/therecipe/qt/core"
+	"reflect"
 	"runtime"
 	"strings"
 	"unsafe"
@@ -20,6 +21,12 @@ func cGoUnpackString(s C.struct_QtNetwork_PackedString) string {
 		return C.GoString(s.data)
 	}
 	return C.GoStringN(s.data, C.int(s.len))
+}
+func cGoUnpackBytes(s C.struct_QtNetwork_PackedString) []byte {
+	if int(s.len) == -1 {
+		return []byte(C.GoString(s.data))
+	}
+	return C.GoBytes(unsafe.Pointer(s.data), C.int(s.len))
 }
 
 type Http2 struct {
@@ -1175,14 +1182,14 @@ func callbackQAbstractSocket_ReadData(ptr unsafe.Pointer, data C.struct_QtNetwor
 		retS := cGoUnpackString(data)
 		ret := C.longlong(signal.(func(*string, int64) int64)(&retS, int64(maxSize)))
 		if ret > 0 {
-			C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))
+			C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))
 		}
 		return ret
 	}
 	retS := cGoUnpackString(data)
 	ret := C.longlong(NewQAbstractSocketFromPointer(ptr).ReadDataDefault(&retS, int64(maxSize)))
 	if ret > 0 {
-		C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))
+		C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))
 	}
 	return ret
 }
@@ -1237,18 +1244,17 @@ func (ptr *QAbstractSocket) ReadDataDefault(data *string, maxSize int64) int64 {
 //export callbackQAbstractSocket_ReadLineData
 func callbackQAbstractSocket_ReadLineData(ptr unsafe.Pointer, data C.struct_QtNetwork_PackedString, maxlen C.longlong) C.longlong {
 	if signal := qt.GetSignal(ptr, "readLineData"); signal != nil {
-		return C.longlong(signal.(func(string, int64) int64)(cGoUnpackString(data), int64(maxlen)))
+		return C.longlong(signal.(func([]byte, int64) int64)(cGoUnpackBytes(data), int64(maxlen)))
 	}
 
-	return C.longlong(NewQAbstractSocketFromPointer(ptr).ReadLineDataDefault(cGoUnpackString(data), int64(maxlen)))
+	return C.longlong(NewQAbstractSocketFromPointer(ptr).ReadLineDataDefault(cGoUnpackBytes(data), int64(maxlen)))
 }
 
-func (ptr *QAbstractSocket) ReadLineDataDefault(data string, maxlen int64) int64 {
+func (ptr *QAbstractSocket) ReadLineDataDefault(data []byte, maxlen int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QAbstractSocket_ReadLineDataDefault(ptr.Pointer(), dataC, C.longlong(maxlen)))
 	}
@@ -1258,18 +1264,18 @@ func (ptr *QAbstractSocket) ReadLineDataDefault(data string, maxlen int64) int64
 //export callbackQAbstractSocket_WriteData
 func callbackQAbstractSocket_WriteData(ptr unsafe.Pointer, data C.struct_QtNetwork_PackedString, size C.longlong) C.longlong {
 	if signal := qt.GetSignal(ptr, "writeData"); signal != nil {
-		return C.longlong(signal.(func(string, int64) int64)(cGoUnpackString(data), int64(size)))
+		return C.longlong(signal.(func([]byte, int64) int64)(cGoUnpackBytes(data), int64(size)))
 	}
 
-	return C.longlong(NewQAbstractSocketFromPointer(ptr).WriteDataDefault(cGoUnpackString(data), int64(size)))
+	return C.longlong(NewQAbstractSocketFromPointer(ptr).WriteDataDefault(cGoUnpackBytes(data), int64(size)))
 }
 
-func (ptr *QAbstractSocket) ConnectWriteData(f func(data string, size int64) int64) {
+func (ptr *QAbstractSocket) ConnectWriteData(f func(data []byte, size int64) int64) {
 	if ptr.Pointer() != nil {
 
 		if signal := qt.LendSignal(ptr.Pointer(), "writeData"); signal != nil {
-			qt.ConnectSignal(ptr.Pointer(), "writeData", func(data string, size int64) int64 {
-				signal.(func(string, int64) int64)(data, size)
+			qt.ConnectSignal(ptr.Pointer(), "writeData", func(data []byte, size int64) int64 {
+				signal.(func([]byte, int64) int64)(data, size)
 				return f(data, size)
 			})
 		} else {
@@ -1285,24 +1291,22 @@ func (ptr *QAbstractSocket) DisconnectWriteData() {
 	}
 }
 
-func (ptr *QAbstractSocket) WriteData(data string, size int64) int64 {
+func (ptr *QAbstractSocket) WriteData(data []byte, size int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QAbstractSocket_WriteData(ptr.Pointer(), dataC, C.longlong(size)))
 	}
 	return 0
 }
 
-func (ptr *QAbstractSocket) WriteDataDefault(data string, size int64) int64 {
+func (ptr *QAbstractSocket) WriteDataDefault(data []byte, size int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QAbstractSocket_WriteDataDefault(ptr.Pointer(), dataC, C.longlong(size)))
 	}
@@ -4183,6 +4187,95 @@ func (ptr *QDnsTextRecord) __values_newList() unsafe.Pointer {
 	return C.QDnsTextRecord___values_newList(ptr.Pointer())
 }
 
+type QDtls struct {
+	core.QObject
+}
+
+type QDtls_ITF interface {
+	core.QObject_ITF
+	QDtls_PTR() *QDtls
+}
+
+func (ptr *QDtls) QDtls_PTR() *QDtls {
+	return ptr
+}
+
+func (ptr *QDtls) Pointer() unsafe.Pointer {
+	if ptr != nil {
+		return ptr.QObject_PTR().Pointer()
+	}
+	return nil
+}
+
+func (ptr *QDtls) SetPointer(p unsafe.Pointer) {
+	if ptr != nil {
+		ptr.QObject_PTR().SetPointer(p)
+	}
+}
+
+func PointerFromQDtls(ptr QDtls_ITF) unsafe.Pointer {
+	if ptr != nil {
+		return ptr.QDtls_PTR().Pointer()
+	}
+	return nil
+}
+
+func NewQDtlsFromPointer(ptr unsafe.Pointer) (n *QDtls) {
+	n = new(QDtls)
+	n.SetPointer(ptr)
+	return
+}
+
+//go:generate stringer -type=QDtls__HandshakeState
+//QDtls::HandshakeState
+type QDtls__HandshakeState int64
+
+const (
+	QDtls__HandshakeNotStarted    QDtls__HandshakeState = QDtls__HandshakeState(0)
+	QDtls__HandshakeInProgress    QDtls__HandshakeState = QDtls__HandshakeState(1)
+	QDtls__PeerVerificationFailed QDtls__HandshakeState = QDtls__HandshakeState(2)
+	QDtls__HandshakeComplete      QDtls__HandshakeState = QDtls__HandshakeState(3)
+)
+
+type QDtlsClientVerifier struct {
+	core.QObject
+}
+
+type QDtlsClientVerifier_ITF interface {
+	core.QObject_ITF
+	QDtlsClientVerifier_PTR() *QDtlsClientVerifier
+}
+
+func (ptr *QDtlsClientVerifier) QDtlsClientVerifier_PTR() *QDtlsClientVerifier {
+	return ptr
+}
+
+func (ptr *QDtlsClientVerifier) Pointer() unsafe.Pointer {
+	if ptr != nil {
+		return ptr.QObject_PTR().Pointer()
+	}
+	return nil
+}
+
+func (ptr *QDtlsClientVerifier) SetPointer(p unsafe.Pointer) {
+	if ptr != nil {
+		ptr.QObject_PTR().SetPointer(p)
+	}
+}
+
+func PointerFromQDtlsClientVerifier(ptr QDtlsClientVerifier_ITF) unsafe.Pointer {
+	if ptr != nil {
+		return ptr.QDtlsClientVerifier_PTR().Pointer()
+	}
+	return nil
+}
+
+func NewQDtlsClientVerifierFromPointer(ptr unsafe.Pointer) (n *QDtlsClientVerifier) {
+	n = new(QDtlsClientVerifier)
+	n.SetPointer(ptr)
+	return
+}
+
 type QHostAddress struct {
 	ptr unsafe.Pointer
 }
@@ -4480,9 +4573,11 @@ func (ptr *QHostAddress) ToIPv4Address() uint {
 	return 0
 }
 
-func (ptr *QHostAddress) ToIPv4Address2(ok bool) uint {
+func (ptr *QHostAddress) ToIPv4Address2(ok *bool) uint {
 	if ptr.Pointer() != nil {
-		return uint(uint32(C.QHostAddress_ToIPv4Address2(ptr.Pointer(), C.char(int8(qt.GoBoolToInt(ok))))))
+		okC := C.char(int8(qt.GoBoolToInt(*ok)))
+		defer func() { *ok = int8(okC) != 0 }()
+		return uint(uint32(C.QHostAddress_ToIPv4Address2(ptr.Pointer(), &okC)))
 	}
 	return 0
 }
@@ -5635,9 +5730,11 @@ func (ptr *QLocalServer) RemoveServer(name string) bool {
 	return int8(C.QLocalServer_QLocalServer_RemoveServer(C.struct_QtNetwork_PackedString{data: nameC, len: C.longlong(len(name))})) != 0
 }
 
-func (ptr *QLocalServer) WaitForNewConnection(msec int, timedOut bool) bool {
+func (ptr *QLocalServer) WaitForNewConnection(msec int, timedOut *bool) bool {
 	if ptr.Pointer() != nil {
-		return int8(C.QLocalServer_WaitForNewConnection(ptr.Pointer(), C.int(int32(msec)), C.char(int8(qt.GoBoolToInt(timedOut))))) != 0
+		timedOutC := C.char(int8(qt.GoBoolToInt(*timedOut)))
+		defer func() { *timedOut = int8(timedOutC) != 0 }()
+		return int8(C.QLocalServer_WaitForNewConnection(ptr.Pointer(), C.int(int32(msec)), &timedOutC)) != 0
 	}
 	return false
 }
@@ -6346,14 +6443,14 @@ func callbackQLocalSocket_ReadData(ptr unsafe.Pointer, data C.struct_QtNetwork_P
 		retS := cGoUnpackString(data)
 		ret := C.longlong(signal.(func(*string, int64) int64)(&retS, int64(c)))
 		if ret > 0 {
-			C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))
+			C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))
 		}
 		return ret
 	}
 	retS := cGoUnpackString(data)
 	ret := C.longlong(NewQLocalSocketFromPointer(ptr).ReadDataDefault(&retS, int64(c)))
 	if ret > 0 {
-		C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))
+		C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))
 	}
 	return ret
 }
@@ -6408,18 +6505,18 @@ func (ptr *QLocalSocket) ReadDataDefault(data *string, c int64) int64 {
 //export callbackQLocalSocket_WriteData
 func callbackQLocalSocket_WriteData(ptr unsafe.Pointer, data C.struct_QtNetwork_PackedString, c C.longlong) C.longlong {
 	if signal := qt.GetSignal(ptr, "writeData"); signal != nil {
-		return C.longlong(signal.(func(string, int64) int64)(cGoUnpackString(data), int64(c)))
+		return C.longlong(signal.(func([]byte, int64) int64)(cGoUnpackBytes(data), int64(c)))
 	}
 
-	return C.longlong(NewQLocalSocketFromPointer(ptr).WriteDataDefault(cGoUnpackString(data), int64(c)))
+	return C.longlong(NewQLocalSocketFromPointer(ptr).WriteDataDefault(cGoUnpackBytes(data), int64(c)))
 }
 
-func (ptr *QLocalSocket) ConnectWriteData(f func(data string, c int64) int64) {
+func (ptr *QLocalSocket) ConnectWriteData(f func(data []byte, c int64) int64) {
 	if ptr.Pointer() != nil {
 
 		if signal := qt.LendSignal(ptr.Pointer(), "writeData"); signal != nil {
-			qt.ConnectSignal(ptr.Pointer(), "writeData", func(data string, c int64) int64 {
-				signal.(func(string, int64) int64)(data, c)
+			qt.ConnectSignal(ptr.Pointer(), "writeData", func(data []byte, c int64) int64 {
+				signal.(func([]byte, int64) int64)(data, c)
 				return f(data, c)
 			})
 		} else {
@@ -6435,24 +6532,22 @@ func (ptr *QLocalSocket) DisconnectWriteData() {
 	}
 }
 
-func (ptr *QLocalSocket) WriteData(data string, c int64) int64 {
+func (ptr *QLocalSocket) WriteData(data []byte, c int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QLocalSocket_WriteData(ptr.Pointer(), dataC, C.longlong(c)))
 	}
 	return 0
 }
 
-func (ptr *QLocalSocket) WriteDataDefault(data string, c int64) int64 {
+func (ptr *QLocalSocket) WriteDataDefault(data []byte, c int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QLocalSocket_WriteDataDefault(ptr.Pointer(), dataC, C.longlong(c)))
 	}
@@ -6982,18 +7077,17 @@ func (ptr *QLocalSocket) SeekDefault(pos int64) bool {
 //export callbackQLocalSocket_ReadLineData
 func callbackQLocalSocket_ReadLineData(ptr unsafe.Pointer, data C.struct_QtNetwork_PackedString, maxSize C.longlong) C.longlong {
 	if signal := qt.GetSignal(ptr, "readLineData"); signal != nil {
-		return C.longlong(signal.(func(string, int64) int64)(cGoUnpackString(data), int64(maxSize)))
+		return C.longlong(signal.(func([]byte, int64) int64)(cGoUnpackBytes(data), int64(maxSize)))
 	}
 
-	return C.longlong(NewQLocalSocketFromPointer(ptr).ReadLineDataDefault(cGoUnpackString(data), int64(maxSize)))
+	return C.longlong(NewQLocalSocketFromPointer(ptr).ReadLineDataDefault(cGoUnpackBytes(data), int64(maxSize)))
 }
 
-func (ptr *QLocalSocket) ReadLineDataDefault(data string, maxSize int64) int64 {
+func (ptr *QLocalSocket) ReadLineDataDefault(data []byte, maxSize int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QLocalSocket_ReadLineDataDefault(ptr.Pointer(), dataC, C.longlong(maxSize)))
 	}
@@ -13999,14 +14093,14 @@ func callbackQNetworkReply_ReadData(ptr unsafe.Pointer, data C.struct_QtNetwork_
 		retS := cGoUnpackString(data)
 		ret := C.longlong(signal.(func(*string, int64) int64)(&retS, int64(maxSize)))
 		if ret > 0 {
-			C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))
+			C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))
 		}
 		return ret
 	}
 	retS := cGoUnpackString(data)
 	ret := C.longlong(NewQNetworkReplyFromPointer(ptr).ReadDataDefault(&retS, int64(maxSize)))
 	if ret > 0 {
-		C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))
+		C.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))
 	}
 	return ret
 }
@@ -14040,18 +14134,17 @@ func (ptr *QNetworkReply) ReadDataDefault(data *string, maxSize int64) int64 {
 //export callbackQNetworkReply_ReadLineData
 func callbackQNetworkReply_ReadLineData(ptr unsafe.Pointer, data C.struct_QtNetwork_PackedString, maxSize C.longlong) C.longlong {
 	if signal := qt.GetSignal(ptr, "readLineData"); signal != nil {
-		return C.longlong(signal.(func(string, int64) int64)(cGoUnpackString(data), int64(maxSize)))
+		return C.longlong(signal.(func([]byte, int64) int64)(cGoUnpackBytes(data), int64(maxSize)))
 	}
 
-	return C.longlong(NewQNetworkReplyFromPointer(ptr).ReadLineDataDefault(cGoUnpackString(data), int64(maxSize)))
+	return C.longlong(NewQNetworkReplyFromPointer(ptr).ReadLineDataDefault(cGoUnpackBytes(data), int64(maxSize)))
 }
 
-func (ptr *QNetworkReply) ReadLineDataDefault(data string, maxSize int64) int64 {
+func (ptr *QNetworkReply) ReadLineDataDefault(data []byte, maxSize int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QNetworkReply_ReadLineDataDefault(ptr.Pointer(), dataC, C.longlong(maxSize)))
 	}
@@ -14061,30 +14154,28 @@ func (ptr *QNetworkReply) ReadLineDataDefault(data string, maxSize int64) int64 
 //export callbackQNetworkReply_WriteData
 func callbackQNetworkReply_WriteData(ptr unsafe.Pointer, data C.struct_QtNetwork_PackedString, maxSize C.longlong) C.longlong {
 	if signal := qt.GetSignal(ptr, "writeData"); signal != nil {
-		return C.longlong(signal.(func(string, int64) int64)(cGoUnpackString(data), int64(maxSize)))
+		return C.longlong(signal.(func([]byte, int64) int64)(cGoUnpackBytes(data), int64(maxSize)))
 	}
 
-	return C.longlong(NewQNetworkReplyFromPointer(ptr).WriteDataDefault(cGoUnpackString(data), int64(maxSize)))
+	return C.longlong(NewQNetworkReplyFromPointer(ptr).WriteDataDefault(cGoUnpackBytes(data), int64(maxSize)))
 }
 
-func (ptr *QNetworkReply) WriteData(data string, maxSize int64) int64 {
+func (ptr *QNetworkReply) WriteData(data []byte, maxSize int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QNetworkReply_WriteData(ptr.Pointer(), dataC, C.longlong(maxSize)))
 	}
 	return 0
 }
 
-func (ptr *QNetworkReply) WriteDataDefault(data string, maxSize int64) int64 {
+func (ptr *QNetworkReply) WriteDataDefault(data []byte, maxSize int64) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QNetworkReply_WriteDataDefault(ptr.Pointer(), dataC, C.longlong(maxSize)))
 	}
@@ -14491,6 +14582,10 @@ const (
 	QNetworkRequest__ContentDispositionHeader QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(6)
 	QNetworkRequest__UserAgentHeader          QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(7)
 	QNetworkRequest__ServerHeader             QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(8)
+	QNetworkRequest__IfModifiedSinceHeader    QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(9)
+	QNetworkRequest__ETagHeader               QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(10)
+	QNetworkRequest__IfMatchHeader            QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(11)
+	QNetworkRequest__IfNoneMatchHeader        QNetworkRequest__KnownHeaders = QNetworkRequest__KnownHeaders(12)
 )
 
 //go:generate stringer -type=QNetworkRequest__LoadControl
@@ -15823,6 +15918,52 @@ func (ptr *QNetworkSession) TimerEventDefault(event core.QTimerEvent_ITF) {
 	}
 }
 
+type QPasswordDigestor struct {
+	ptr unsafe.Pointer
+}
+
+type QPasswordDigestor_ITF interface {
+	QPasswordDigestor_PTR() *QPasswordDigestor
+}
+
+func (ptr *QPasswordDigestor) QPasswordDigestor_PTR() *QPasswordDigestor {
+	return ptr
+}
+
+func (ptr *QPasswordDigestor) Pointer() unsafe.Pointer {
+	if ptr != nil {
+		return ptr.ptr
+	}
+	return nil
+}
+
+func (ptr *QPasswordDigestor) SetPointer(p unsafe.Pointer) {
+	if ptr != nil {
+		ptr.ptr = p
+	}
+}
+
+func PointerFromQPasswordDigestor(ptr QPasswordDigestor_ITF) unsafe.Pointer {
+	if ptr != nil {
+		return ptr.QPasswordDigestor_PTR().Pointer()
+	}
+	return nil
+}
+
+func NewQPasswordDigestorFromPointer(ptr unsafe.Pointer) (n *QPasswordDigestor) {
+	n = new(QPasswordDigestor)
+	n.SetPointer(ptr)
+	return
+}
+
+func (ptr *QPasswordDigestor) DestroyQPasswordDigestor() {
+	if ptr != nil {
+		C.free(ptr.Pointer())
+		ptr.SetPointer(nil)
+		runtime.SetFinalizer(ptr, nil)
+	}
+}
+
 type QSctpServer struct {
 	QTcpServer
 }
@@ -16017,6 +16158,12 @@ const (
 	QSsl__TlsV1_0OrLater  QSsl__SslProtocol = QSsl__SslProtocol(8)
 	QSsl__TlsV1_1OrLater  QSsl__SslProtocol = QSsl__SslProtocol(9)
 	QSsl__TlsV1_2OrLater  QSsl__SslProtocol = QSsl__SslProtocol(10)
+	QSsl__DtlsV1_0        QSsl__SslProtocol = QSsl__SslProtocol(11)
+	QSsl__DtlsV1_0OrLater QSsl__SslProtocol = QSsl__SslProtocol(12)
+	QSsl__DtlsV1_2        QSsl__SslProtocol = QSsl__SslProtocol(13)
+	QSsl__DtlsV1_2OrLater QSsl__SslProtocol = QSsl__SslProtocol(14)
+	QSsl__TlsV1_3         QSsl__SslProtocol = QSsl__SslProtocol(15)
+	QSsl__TlsV1_3OrLater  QSsl__SslProtocol = QSsl__SslProtocol(16)
 	QSsl__UnknownProtocol QSsl__SslProtocol = QSsl__SslProtocol(-1)
 )
 
@@ -16378,6 +16525,20 @@ func (ptr *QSslCertificate) PublicKey() *QSslKey {
 		return tmpValue
 	}
 	return nil
+}
+
+func (ptr *QSslCertificate) IssuerDisplayName() string {
+	if ptr.Pointer() != nil {
+		return cGoUnpackString(C.QSslCertificate_IssuerDisplayName(ptr.Pointer()))
+	}
+	return ""
+}
+
+func (ptr *QSslCertificate) SubjectDisplayName() string {
+	if ptr.Pointer() != nil {
+		return cGoUnpackString(C.QSslCertificate_SubjectDisplayName(ptr.Pointer()))
+	}
+	return ""
 }
 
 func (ptr *QSslCertificate) ToText() string {
@@ -19795,9 +19956,11 @@ func (ptr *QTcpServer) Listen(address QHostAddress_ITF, port uint16) bool {
 	return false
 }
 
-func (ptr *QTcpServer) WaitForNewConnection(msec int, timedOut bool) bool {
+func (ptr *QTcpServer) WaitForNewConnection(msec int, timedOut *bool) bool {
 	if ptr.Pointer() != nil {
-		return int8(C.QTcpServer_WaitForNewConnection(ptr.Pointer(), C.int(int32(msec)), C.char(int8(qt.GoBoolToInt(timedOut))))) != 0
+		timedOutC := C.char(int8(qt.GoBoolToInt(*timedOut)))
+		defer func() { *timedOut = int8(timedOutC) != 0 }()
+		return int8(C.QTcpServer_WaitForNewConnection(ptr.Pointer(), C.int(int32(msec)), &timedOutC)) != 0
 	}
 	return false
 }
@@ -20493,12 +20656,11 @@ func (ptr *QUdpSocket) LeaveMulticastGroup2(groupAddress QHostAddress_ITF, iface
 	return false
 }
 
-func (ptr *QUdpSocket) ReadDatagram(data string, maxSize int64, address QHostAddress_ITF, port uint16) int64 {
+func (ptr *QUdpSocket) ReadDatagram(data []byte, maxSize int64, address QHostAddress_ITF, port uint16) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QUdpSocket_ReadDatagram(ptr.Pointer(), dataC, C.longlong(maxSize), PointerFromQHostAddress(address), C.ushort(port)))
 	}
@@ -20519,12 +20681,11 @@ func (ptr *QUdpSocket) WriteDatagram2(datagram QNetworkDatagram_ITF) int64 {
 	return 0
 }
 
-func (ptr *QUdpSocket) WriteDatagram(data string, size int64, address QHostAddress_ITF, port uint16) int64 {
+func (ptr *QUdpSocket) WriteDatagram(data []byte, size int64, address QHostAddress_ITF, port uint16) int64 {
 	if ptr.Pointer() != nil {
 		var dataC *C.char
-		if data != "" {
-			dataC = C.CString(data)
-			defer C.free(unsafe.Pointer(dataC))
+		if len(data) != 0 {
+			dataC = (*C.char)(unsafe.Pointer(&data[0]))
 		}
 		return int64(C.QUdpSocket_WriteDatagram(ptr.Pointer(), dataC, C.longlong(size), PointerFromQHostAddress(address), C.ushort(port)))
 	}

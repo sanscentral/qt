@@ -75,11 +75,12 @@ func android_config(target, path, depPath string) string {
 		AndroidExtraLibs              string `json:"android-extra-libs"`
 		AndroidPackageSourceDirectory string `json:"android-package-source-directory"`
 		Qmlrootpath                   string `json:"qml-root-path"`
+		StdcppPath                    string `json:"stdcpp-path"`
 		Applicationbinary             string `json:"application-binary"`
 	}{
 		Qt:                            filepath.Join(utils.QT_DIR(), utils.QT_VERSION_MAJOR(), "android_armv7"),
 		Sdk:                           utils.ANDROID_SDK_DIR(),
-		SdkBuildToolsRevision:         "28.0.2",
+		SdkBuildToolsRevision:         "28.0.3",
 		Ndk:                           utils.ANDROID_NDK_DIR(),
 		Toolchainprefix:               "arm-linux-androideabi",
 		Toolprefix:                    "arm-linux-androideabi",
@@ -89,6 +90,7 @@ func android_config(target, path, depPath string) string {
 		AndroidExtraLibs:              filepath.Join(depPath, "libgo_base.so"),
 		AndroidPackageSourceDirectory: filepath.Join(path, target),
 		Qmlrootpath:                   path,
+		StdcppPath:                    filepath.Join(utils.ANDROID_NDK_DIR(), "sources", "cxx-stl", "llvm-libc++", "libs", "armeabi-v7a", "libc++_shared.so"),
 		Applicationbinary:             filepath.Join(depPath, "libgo.so"),
 	}
 
@@ -97,14 +99,15 @@ func android_config(target, path, depPath string) string {
 		jsonStruct.Toolchainprefix = "x86"
 		jsonStruct.Toolprefix = "i686-linux-android"
 		jsonStruct.Targetarchitecture = "x86"
+		jsonStruct.StdcppPath = filepath.Join(utils.ANDROID_NDK_DIR(), "sources", "cxx-stl", "llvm-libc++", "libs", jsonStruct.Targetarchitecture, "libc++_shared.so")
 	}
 
 	if utils.QT_DOCKER() {
 		switch target {
 		case "android":
-			jsonStruct.AndroidExtraLibs += "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2o-arm", "libcrypto.so") + "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2o-arm", "libssl.so")
+			jsonStruct.AndroidExtraLibs += "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2q-arm", "libcrypto.so") + "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2q-arm", "libssl.so")
 		case "android-emulator":
-			jsonStruct.AndroidExtraLibs += "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2o-x86", "libcrypto.so") + "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2o-x86", "libssl.so")
+			jsonStruct.AndroidExtraLibs += "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2q-x86", "libcrypto.so") + "," + filepath.Join(os.Getenv("HOME"), "openssl-1.0.2q-x86", "libssl.so")
 		}
 	}
 
@@ -177,7 +180,7 @@ func ios_c_main_wrapper() string {
 	for _, n := range rcc.ResourceNames {
 		fmt.Fprintf(bb, "qInitResources_%v();\n", n)
 	}
-	bb.WriteString("go_main_wrapper();\n}")
+	bb.WriteString("go_main_wrapper(argc, argv);\n}")
 	return bb.String()
 }
 
@@ -193,7 +196,7 @@ func ios_plist(name string) string {
 	<key>CFBundleGetInfoString</key>
 	<string>Created by Qt/QMake</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.yourcompany.%[1]v</string>
+	<string>%[2]v</string>
 	<key>CFBundleName</key>
 	<string>%[1]v</string>
 	<key>CFBundlePackageType</key>
@@ -223,7 +226,7 @@ func ios_plist(name string) string {
 	<true/>
 </dict>
 </plist>
-`, name)
+`, name, strings.Replace(name, "_", "", -1))
 }
 
 func ios_launchscreen(name string) string {
@@ -334,7 +337,7 @@ func ios_appicon() string {
 `
 }
 
-func ios_xcodeproject(depPath string) string {
+func ios_xcodeproject() string {
 	return `// !$*UTF8*$!
 {
 	archiveVersion = 1;
@@ -727,9 +730,9 @@ go tool link -f -o $PWD/relinked -importcfg $PWD/b001/importcfg.link -buildmode=
 
 //js/wasm
 
-func js_c_main_wrapper() string {
+func js_c_main_wrapper(target string) string {
 	bb := new(bytes.Buffer)
-	bb.WriteString("#include <emscripten/val.h>\n")
+	bb.WriteString("#include <emscripten.h>\n")
 	for _, n := range rcc.ResourceNames {
 		fmt.Fprintf(bb, "extern int qInitResources_%v();\n", n)
 	}
@@ -738,40 +741,45 @@ func js_c_main_wrapper() string {
 		fmt.Fprintf(bb, "qInitResources_%v();\n", n)
 	}
 
-	//TODO: use eval in EM_ASM instead ? also make blocking with emscripten_sync_run_in_main_runtime_thread or something
-	bb.WriteString("emscripten::val document = emscripten::val::global(\"document\");\n")
-	bb.WriteString("emscripten::val script = document.call<emscripten::val>(\"createElement\", emscripten::val(\"script\"));\n")
-	bb.WriteString("script.set(\"src\", emscripten::val(\"go.js\"));\n")
-	bb.WriteString("document[\"body\"].call<void>(\"appendChild\", script);\n")
+	//TODO: use emscripten_sync_run_in_main_runtime_thread once thread support is there ?
+	bb.WriteString("emscripten_run_script(\"Module._goMain()\");\n")
+
+	bb.WriteString("return 0;\n")
 	bb.WriteString("}")
 	return bb.String()
 }
 
-//TODO: cleanup
 func wasm_js() string {
 	return `
-if (!WebAssembly.instantiateStreaming) { // polyfill 
-	WebAssembly.instantiateStreaming = async (resp, importObject) => { 
-		const source = await (await resp).arrayBuffer(); 
-		return await WebAssembly.instantiate(source, importObject); 
-	}; 
-} 
 
-const go = new Go(); 
-WebAssembly.instantiateStreaming(fetch("go.wasm"), go.importObject).then((result) => { 
-	go.run(result.instance); 
-}).catch((err) => { 
-	//console.error(err); 
+	if (!WebAssembly.instantiateStreaming) { // polyfill 
+		WebAssembly.instantiateStreaming = async (resp, importObject) => { 
+			const source = await (await resp).arrayBuffer(); 
+			return await WebAssembly.instantiate(source, importObject); 
+		};
+	} 
 
-	fetch('go.wasm').then(response =>
-		response.arrayBuffer()
-	).then(bytes =>
-		WebAssembly.instantiate(bytes, go.importObject)
-	).then(result => {
-		go.run(result.instance); 
+	let go = new Go(); 
+	let instance;
+
+	let fetchPromise = fetch("go.wasm");
+	WebAssembly.instantiateStreaming(fetchPromise, go.importObject).then((result) => { 
+		instance = result.instance;
+	}).catch((err) => { 
+		//console.log(err); 
+
+		//fallback for wrong MIME type
+		fetchPromise.then((response) =>
+			response.arrayBuffer()
+		).then((bytes) =>
+			WebAssembly.instantiate(bytes, go.importObject)
+		).then((result) =>
+			instance = result.instance
+		);
 	});
 
-});
-
+	Module._goMain = function() {
+		go.run(instance);
+	};
 })();`
 }

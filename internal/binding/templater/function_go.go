@@ -292,6 +292,8 @@ func goFunctionBody(function *parser.Function) string {
 							conv := converter.GoOutputJS(fmt.Sprintf("args[%v]", i+1), p.Value, function, function.PureGoOutput)
 							if strings.Contains(conv, "func(") {
 								fmt.Fprintf(bb, "%v := %v\n", parser.CleanName(p.Name, p.Value), fmt.Sprintf("args[%v]", i+1))
+							} else if converter.GoType(function, p.Value, p.PureGoType) == "*bool" {
+								fmt.Fprintf(bb, "%v := uintptr(args[%v].Int())\n", parser.CleanName(p.Name, p.Value), i+1)
 							} else {
 								fmt.Fprintf(bb, "%v := %v\n", parser.CleanName(p.Name, p.Value), conv)
 							}
@@ -319,6 +321,18 @@ func goFunctionBody(function *parser.Function) string {
 				}
 			}
 
+			for _, p := range function.Parameters {
+				if converter.GoType(function, p.Value, p.PureGoType) == "*bool" {
+					if UseJs() {
+						fmt.Fprintf(bb, "%vR := int8(qt.WASM.Call(\"getValue\", %v, \"i8\").Int()) != 0\ndefer func(){qt.WASM.Call(\"setValue\", %v, qt.GoBoolToInt(%vR), \"i8\")}()\n", parser.CleanName(p.Name, p.Value), parser.CleanName(p.Name, p.Value), parser.CleanName(p.Name, p.Value), parser.CleanName(p.Name, p.Value))
+					} else {
+						fmt.Fprintf(bb, "%vR := %v\ndefer func(){*%v = %v}()\n", parser.CleanName(p.Name, p.Value), converter.GoOutput("*"+parser.CleanName(p.Name, p.Value), p.Value, function, p.PureGoType), parser.CleanName(p.Name, p.Value), converter.GoInput(parser.CleanName(p.Name, p.Value)+"R", strings.Replace(p.Value, "*", "", -1), function, p.PureGoType))
+					}
+				}
+			}
+
+			//
+
 			if UseJs() {
 				fmt.Fprintf(bb, "if signal := qt.GetSignal(unsafe.Pointer(ptr), \"%v%v\"); signal != nil {\n",
 					function.Name,
@@ -332,18 +346,14 @@ func goFunctionBody(function *parser.Function) string {
 			}
 
 			if converter.GoHeaderOutput(&headerOutputFakeFunc) == "" {
-				if parser.UseWasm() {
-					//TODO: workaround for https://github.com/golang/go/issues/26045#issuecomment-400017599
-					fmt.Fprintf(bb, "go signal.(%v)(%v)", converter.GoHeaderInputSignalFunction(function), converter.GoInputParametersForCallback(function))
-				} else {
-					fmt.Fprintf(bb, "signal.(%v)(%v)", converter.GoHeaderInputSignalFunction(function), converter.GoInputParametersForCallback(function))
-				}
+				//TODO wasm: wait for fix to https://github.com/golang/go/issues/26045#issuecomment-400017599
+				fmt.Fprintf(bb, "signal.(%v)(%v)", converter.GoHeaderInputSignalFunction(function), converter.GoInputParametersForCallback(function))
 			} else {
 				if function.Name == "readData" && len(function.Parameters) == 2 {
 					if !UseJs() {
 						fmt.Fprint(bb, "retS := cGoUnpackString(data)\n")
 						fmt.Fprintf(bb, "ret := %v\n", converter.GoInput(fmt.Sprintf("signal.(%v)(%v)", converter.GoHeaderInputSignalFunction(function), converter.GoInputParametersForCallback(function)), function.Output, function, function.PureGoOutput))
-						fmt.Fprint(bb, "if ret > 0 {\nC.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))\n}\n")
+						fmt.Fprint(bb, "if ret > 0 {\nC.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))\n}\n")
 						fmt.Fprint(bb, "return ret")
 					} else {
 						fmt.Fprint(bb, "return 0")
@@ -413,7 +423,7 @@ func goFunctionBody(function *parser.Function) string {
 						if !UseJs() {
 							fmt.Fprint(bb, "retS := cGoUnpackString(data)\n")
 							fmt.Fprintf(bb, "ret := %v\n", converter.GoInput(fmt.Sprintf("New%vFromPointer(ptr).%v%vDefault(%v)", strings.Title(class.Name), strings.Replace(strings.Title(function.Name), parser.TILDE, "Destroy", -1), function.OverloadNumber, converter.GoInputParametersForCallback(function)), function.Output, function, function.PureGoOutput))
-							fmt.Fprint(bb, "if ret > 0 {\nC.memcpy(unsafe.Pointer(data.data), unsafe.Pointer(C.CString(retS)), C.size_t(ret))\n}\n")
+							fmt.Fprint(bb, "if ret > 0 {\nC.memcpy(unsafe.Pointer(data.data), unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&retS)).Data), C.size_t(ret))\n}\n")
 							fmt.Fprint(bb, "return ret")
 						} else {
 							fmt.Fprint(bb, "return 0")

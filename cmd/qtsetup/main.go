@@ -82,16 +82,17 @@ func main() {
 	if target == "desktop" {
 		target = runtime.GOOS
 	}
+	utils.CheckBuildTarget(target)
+	cmd.InitEnv(target)
 
 	if dynamic && (target == runtime.GOOS || target == "js" || target == "wasm") {
 		os.Setenv("QT_DYNAMIC_SETUP", "true")
 	}
 
-	if target == "js" || target == "wasm" || strings.HasPrefix(target, "ios") {
+	if target == "js" || target == "wasm" { //TODO: remove for module support + resolve dependencies
 		os.Setenv("GOCACHE", "off")
 	}
 
-	utils.CheckBuildTarget(target)
 	switch mode {
 	case "prep":
 		setup.Prep()

@@ -8,6 +8,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -18,6 +19,9 @@ import (
 var buildVersion = "no build version"
 
 func ParseFlags() bool {
+	if runtime.GOOS == "windows" {
+		utils.Log.SetFormatter(&logrus.TextFormatter{DisableColors: true})
+	}
 	var (
 		debug      = flag.Bool("debug", false, "print debug logs")
 		help       = flag.Bool("help", false, "print help")
@@ -53,6 +57,117 @@ func ParseFlags() bool {
 	}
 
 	return help != nil && *help
+}
+
+func InitEnv(target string) {
+	if target != runtime.GOOS || runtime.GOARCH != "amd64" {
+		return
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		if utils.QT_PKG_CONFIG() {
+			return
+		}
+	case "darwin":
+		if utils.QT_HOMEBREW() || utils.QT_MACPORTS() || utils.QT_NIX() {
+			return
+		}
+	case "windows":
+		if utils.QT_MSYS2() {
+			return
+		}
+
+		defer func() {
+			qtenvPath := filepath.Join(filepath.Dir(utils.ToolPath("qmake", target)), "qtenv2.bat")
+			for _, s := range strings.Split(utils.Load(qtenvPath), "\r\n") {
+				if strings.HasPrefix(s, "set PATH") {
+					os.Setenv("PATH", strings.TrimPrefix(strings.Replace(s, "%PATH%", os.Getenv("PATH"), -1), "set PATH="))
+					break
+				}
+			}
+
+			for i, dPath := range []string{filepath.Join(runtime.GOROOT(), "bin", "qtenv.bat"), filepath.Join(utils.GOBIN(), "qtenv.bat")} {
+				sPath := qtenvPath
+				existed := utils.ExistsFile(dPath)
+				if existed {
+					utils.RemoveAll(dPath)
+				}
+				err := os.Link(sPath, dPath)
+				if i != 0 {
+					continue
+				}
+				if err == nil {
+					if !existed {
+						utils.Log.Infof("successfully created %v symlink in your PATH (%v)", filepath.Base(dPath), dPath)
+					}
+				} else {
+					utils.Log.Warnf("failed to create %v symlink in your PATH (%v); please use %v instead", filepath.Base(dPath), dPath, sPath)
+				}
+			}
+		}()
+	default:
+		return
+	}
+
+	if !utils.ExistsDir(utils.QT_DIR()) {
+		qt_dir := strings.TrimSpace(utils.RunCmd(exec.Command("go", "list", "-f", "{{.Dir}}", "github.com/therecipe/env_"+runtime.GOOS+"_amd64_"+strconv.Itoa(utils.QT_VERSION_NUM())[:3]), "get env dir"))
+
+		switch runtime.GOOS {
+		case "linux", "darwin", "windows":
+			os.Setenv("QT_DIR", qt_dir)
+			if api := utils.QT_API(""); api == "" {
+				os.Setenv("QT_API", utils.QT_VERSION())
+			}
+		}
+
+		var err error
+		var link string
+		switch runtime.GOOS {
+		case "linux":
+			link = filepath.Join("/var", "tmp", ".env_linux_amd64")
+			utils.RemoveAll(link)
+			err = os.Symlink(qt_dir, link)
+		case "darwin":
+			link = filepath.Join("/Applications", ".env_darwin_amd64")
+			utils.RemoveAll(link)
+			err = os.Symlink(qt_dir, link)
+		case "windows":
+			link = filepath.Join("C:\\", "Users", "Public", "env_windows_amd64")
+			utils.RemoveAll(link)
+			_, err = utils.RunCmdOptionalError(exec.Command("cmd", "/C", "mklink", "/J", link, qt_dir), "create symlink for env")
+		}
+		if err != nil {
+			if !(utils.ExistsFile(link) || utils.ExistsDir(link)) {
+				utils.Log.WithError(err).Warn("failed to create env symlink; fallback to patching binaries instead (this won't work for go modules)\r\nplease open an issue")
+				cmd := exec.Command("go", "run", "patch.go", qt_dir)
+				cmd.Dir = qt_dir
+				_, err = utils.RunCmdOptionalError(cmd, "patch env binaries")
+				if err != nil {
+					utils.Log.Warn("failed to patch binaries (do you use go modules?)\r\nyou won't be able to simply \"go build/run\" your application, but qtdeploy-ing applications should work nevertheless\r\nplease open an issue")
+				}
+			}
+		}
+
+		var webenginearchive string
+		switch runtime.GOOS {
+		case "linux":
+			webenginearchive = filepath.Join(qt_dir, utils.QT_VERSION(), "gcc_64", "lib", "libQt5WebEngineCore.so."+utils.QT_VERSION()+".gz")
+		case "darwin":
+			webenginearchive = filepath.Join(qt_dir, utils.QT_VERSION(), "clang_64", "lib", "QtWebEngineCore.framework", "Versions", "Current", "QtWebEngineCore.gz")
+		case "windows":
+			return
+		}
+
+		if utils.ExistsFile(webenginearchive) {
+			_, err := utils.RunCmdOptionalError(exec.Command("gzip", "-d", webenginearchive), "uncompress webengine")
+			if err != nil {
+				utils.Log.WithError(err).Warn("failed to uncompress webengine, (do you use go modules?)")
+			} else {
+				utils.RemoveAll(webenginearchive)
+			}
+		}
+	}
 }
 
 func Docker(arg []string, target, path string, writeCacheToHost bool) {
@@ -323,12 +438,16 @@ func BuildEnv(target, name, depPath string) (map[string]string, []string, []stri
 			"GOARM":  "7",
 
 			"CGO_ENABLED": "1",
-			"CC":          filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "arm-linux-androideabi-4.9", "prebuilt", runtime.GOOS+"-x86_64", "bin", "arm-linux-androideabi-gcc"),
-			"CXX":         filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "arm-linux-androideabi-4.9", "prebuilt", runtime.GOOS+"-x86_64", "bin", "arm-linux-androideabi-g++"),
+			"CC":          filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "llvm", "prebuilt", runtime.GOOS+"-x86_64", "bin", "clang"),
+			"CXX":         filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "llvm", "prebuilt", runtime.GOOS+"-x86_64", "bin", "clang++"),
 
-			//TODO: move flags into template_cgo_qmake ?
-			"CGO_CPPFLAGS": fmt.Sprintf("-isystem %v -I %v", filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-arm", "usr", "include"), filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "arm-linux-androideabi-4.9", "prebuilt", runtime.GOOS+"-x86_64", "lib", "gcc", "arm-linux-androideabi", "4.9.x", "include")),
-			"CGO_LDFLAGS":  fmt.Sprintf("--sysroot=%v -llog", filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-arm")),
+			"CGO_CPPFLAGS": fmt.Sprintf("-D__ANDROID_API__=16 -target armv7-none-linux-androideabi -gcc-toolchain %v --sysroot=%v -isystem %v",
+				filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "arm-linux-androideabi-4.9", "prebuilt", runtime.GOOS+"-x86_64"),
+				filepath.Join(utils.ANDROID_NDK_DIR(), "sysroot"),
+				filepath.Join(utils.ANDROID_NDK_DIR(), "sysroot", "usr", "include", "arm-linux-androideabi")),
+			"CGO_LDFLAGS": fmt.Sprintf("-D__ANDROID_API__=16 -target armv7-none-linux-androideabi -gcc-toolchain %v --sysroot=%v",
+				filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "arm-linux-androideabi-4.9", "prebuilt", runtime.GOOS+"-x86_64"),
+				filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-arm")),
 		}
 		if runtime.GOOS == "windows" {
 			env["TMP"] = os.Getenv("TMP")
@@ -348,12 +467,16 @@ func BuildEnv(target, name, depPath string) (map[string]string, []string, []stri
 			"GOARCH": "386",
 
 			"CGO_ENABLED": "1",
-			"CC":          filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "x86-4.9", "prebuilt", runtime.GOOS+"-x86_64", "bin", "i686-linux-android-gcc"),
-			"CXX":         filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "x86-4.9", "prebuilt", runtime.GOOS+"-x86_64", "bin", "i686-linux-android-g++"),
+			"CC":          filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "llvm", "prebuilt", runtime.GOOS+"-x86_64", "bin", "clang"),
+			"CXX":         filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "llvm", "prebuilt", runtime.GOOS+"-x86_64", "bin", "clang++"),
 
-			//TODO: move flags into template_cgo_qmake ?
-			"CGO_CPPFLAGS": fmt.Sprintf("-isystem %v -I %v", filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-x86", "usr", "include"), filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "x86-4.9", "prebuilt", runtime.GOOS+"-x86_64", "lib", "gcc", "i686-linux-android", "4.9.x", "include")),
-			"CGO_LDFLAGS":  fmt.Sprintf("--sysroot=%v -llog", filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-x86")),
+			"CGO_CPPFLAGS": fmt.Sprintf("-D__ANDROID_API__=16 -target i686-none-linux-android -mstackrealign -gcc-toolchain %v --sysroot=%v -isystem %v",
+				filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "x86-4.9", "prebuilt", runtime.GOOS+"-x86_64"),
+				filepath.Join(utils.ANDROID_NDK_DIR(), "sysroot"),
+				filepath.Join(utils.ANDROID_NDK_DIR(), "sysroot", "usr", "include", "i686-linux-android")),
+			"CGO_LDFLAGS": fmt.Sprintf("-D__ANDROID_API__=16 -target i686-none-linux-android -mstackrealign -gcc-toolchain %v --sysroot=%v",
+				filepath.Join(utils.ANDROID_NDK_DIR(), "toolchains", "x86-4.9", "prebuilt", runtime.GOOS+"-x86_64"),
+				filepath.Join(utils.ANDROID_NDK_DIR(), "platforms", "android-16", "arch-x86")),
 		}
 		if runtime.GOOS == "windows" {
 			env["TMP"] = os.Getenv("TMP")
@@ -430,6 +553,13 @@ func BuildEnv(target, name, depPath string) (map[string]string, []string, []stri
 			"CGO_ENABLED": "1",
 		}
 
+		if utils.QT_VERSION_NUM() >= 5120 {
+			env["GOARCH"] = "amd64"
+			if strings.Contains(utils.QT_DIR(), "env_windows_amd64") {
+				env["CGO_LDFLAGS"] = filepath.Join("C:\\", "Users", "Public", "env_windows_amd64", "Tools", "mingw730_64", "x86_64-w64-mingw32", "lib", "libmsvcrt.a")
+			}
+		}
+
 		if runtime.GOOS == target {
 			if utils.QT_MSYS2() {
 				env["GOARCH"] = utils.QT_MSYS2_ARCH()
@@ -437,7 +567,10 @@ func BuildEnv(target, name, depPath string) (map[string]string, []string, []stri
 				env["PATH"] = filepath.Join(utils.QT_MSYS2_DIR(), "bin") + ";" + env["PATH"]
 			} else {
 				// use gcc shipped with qt installation
-				path := filepath.Join(utils.QT_DIR(), "Tools", "mingw530_32", "bin")
+				path := filepath.Join(utils.QT_DIR(), "Tools", "mingw730_64", "bin")
+				if !utils.ExistsDir(path) {
+					path = strings.Replace(path, "mingw730_64", "mingw530_32", -1)
+				}
 				if !utils.ExistsDir(path) {
 					path = strings.Replace(path, "mingw530_32", "mingw492_32", -1)
 				}
@@ -491,6 +624,10 @@ func BuildEnv(target, name, depPath string) (map[string]string, []string, []stri
 					env["CXX"] = "arm-linux-gnueabihf-g++"
 				}
 			}
+		}
+
+		if target == "linux" {
+			env["CGO_LDFLAGS"] = "-Wl,-rpath,./lib"
 		}
 
 	case "rpi1", "rpi2", "rpi3":
@@ -602,9 +739,15 @@ func BuildEnv(target, name, depPath string) (map[string]string, []string, []stri
 		env["PATH"] = env["PATH"] + ":" + env["EMSDK"] + ":" + env["LLVM_ROOT"] + ":" + env["NODE_JS"] + ":" + env["EMSCRIPTEN"]
 	}
 
-	env["CGO_CFLAGS_ALLOW"] = utils.CGO_CFLAGS_ALLOW()
-	env["CGO_CXXFLAGS_ALLOW"] = utils.CGO_CXXFLAGS_ALLOW()
-	env["CGO_LDFLAGS_ALLOW"] = utils.CGO_LDFLAGS_ALLOW()
+	if runtime.GOOS != target || strings.Contains(runtime.Version(), "1.10") {
+		env["CGO_CFLAGS_ALLOW"] = utils.CGO_CFLAGS_ALLOW()
+		env["CGO_CXXFLAGS_ALLOW"] = utils.CGO_CXXFLAGS_ALLOW()
+		env["CGO_LDFLAGS_ALLOW"] = utils.CGO_LDFLAGS_ALLOW()
+	}
+
+	if flags := utils.GOFLAGS(); len(flags) != 0 {
+		env["GOFLAGS"] = flags
+	}
 
 	for _, e := range os.Environ() {
 		es := strings.Split(e, "=")

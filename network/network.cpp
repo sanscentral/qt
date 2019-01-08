@@ -2315,10 +2315,9 @@ unsigned int QHostAddress_ToIPv4Address(void* ptr)
 	return static_cast<QHostAddress*>(ptr)->toIPv4Address();
 }
 
-unsigned int QHostAddress_ToIPv4Address2(void* ptr, char ok)
+unsigned int QHostAddress_ToIPv4Address2(void* ptr, char* ok)
 {
-	Q_UNUSED(ok);
-	return static_cast<QHostAddress*>(ptr)->toIPv4Address(NULL);
+	return static_cast<QHostAddress*>(ptr)->toIPv4Address(reinterpret_cast<bool*>(ok));
 }
 
 void* QHostInfo_QHostInfo_FromName(struct QtNetwork_PackedString name)
@@ -2910,10 +2909,9 @@ char QLocalServer_QLocalServer_RemoveServer(struct QtNetwork_PackedString name)
 	return QLocalServer::removeServer(QString::fromUtf8(name.data, name.len));
 }
 
-char QLocalServer_WaitForNewConnection(void* ptr, int msec, char timedOut)
+char QLocalServer_WaitForNewConnection(void* ptr, int msec, char* timedOut)
 {
-	Q_UNUSED(timedOut);
-	return static_cast<QLocalServer*>(ptr)->waitForNewConnection(msec, NULL);
+	return static_cast<QLocalServer*>(ptr)->waitForNewConnection(msec, reinterpret_cast<bool*>(timedOut));
 }
 
 void QLocalServer_Close(void* ptr)
@@ -7490,6 +7488,16 @@ void* QSslCertificate_PublicKey(void* ptr)
 	return new QSslKey(static_cast<QSslCertificate*>(ptr)->publicKey());
 }
 
+struct QtNetwork_PackedString QSslCertificate_IssuerDisplayName(void* ptr)
+{
+	return ({ QByteArray tad77ca = static_cast<QSslCertificate*>(ptr)->issuerDisplayName().toUtf8(); QtNetwork_PackedString { const_cast<char*>(tad77ca.prepend("WHITESPACE").constData()+10), tad77ca.size()-10 }; });
+}
+
+struct QtNetwork_PackedString QSslCertificate_SubjectDisplayName(void* ptr)
+{
+	return ({ QByteArray t65a96d = static_cast<QSslCertificate*>(ptr)->subjectDisplayName().toUtf8(); QtNetwork_PackedString { const_cast<char*>(t65a96d.prepend("WHITESPACE").constData()+10), t65a96d.size()-10 }; });
+}
+
 struct QtNetwork_PackedString QSslCertificate_ToText(void* ptr)
 {
 	return ({ QByteArray t52ef8a = static_cast<QSslCertificate*>(ptr)->toText().toUtf8(); QtNetwork_PackedString { const_cast<char*>(t52ef8a.prepend("WHITESPACE").constData()+10), t52ef8a.size()-10 }; });
@@ -9450,10 +9458,9 @@ char QTcpServer_Listen(void* ptr, void* address, unsigned short port)
 	return static_cast<QTcpServer*>(ptr)->listen(*static_cast<QHostAddress*>(address), port);
 }
 
-char QTcpServer_WaitForNewConnection(void* ptr, int msec, char timedOut)
+char QTcpServer_WaitForNewConnection(void* ptr, int msec, char* timedOut)
 {
-	Q_UNUSED(timedOut);
-	return static_cast<QTcpServer*>(ptr)->waitForNewConnection(msec, NULL);
+	return static_cast<QTcpServer*>(ptr)->waitForNewConnection(msec, reinterpret_cast<bool*>(timedOut));
 }
 
 void QTcpServer_ConnectAcceptError(void* ptr)
